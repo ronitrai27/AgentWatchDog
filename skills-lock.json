@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "skills": {
+    "langchain-agent-monitoring": {
+      "source": "langchain-ai/langchain-skills",
+      "sourceType": "github",
+      "skillPath": "skills/langchain-agent-monitoring/SKILL.md",
+      "computedHash": "388520ea49a649fffb28e11ad18f5566acbbc49c929b794fd9588e1f0b9dd30b",
+      "installMode": "copy"
+    },
+    "langchain-agent-tracing": {
+      "source": "langchain-ai/langchain-skills",
+      "sourceType": "github",
+      "skillPath": "skills/langchain-agent-tracing/SKILL.md",
+      "computedHash": "358bc61029933171d6c8844a2b5a3873bbac5d4b2a2e2bd8f4ffeabb66ddd703",
+      "installMode": "copy"
+    },
+    "langchain-build-agent": {
+      "source": "langchain-ai/langchain-skills",
+      "sourceType": "github",
+      "skillPath": "skills/langchain-build-agent/SKILL.md",
+      "computedHash": "7632682b9610a2f51285554b5c0477d621ddafa5e7780ea7177b9ae17380ec6b",
+      "installMode": "copy"
+    },
+    "langchain-eval-engineering": {
+      "source": "langchain-ai/langchain-skills",
+      "sourceType": "github",
+      "skillPath": "skills/langchain-eval-engineering/SKILL.md",
+      "computedHash": "04520c46216489586faf3f8cc48fee8097fb8187edda69bca600363de493f373",
+      "installMode": "copy"
+    }
+  }
+}
