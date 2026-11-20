@@ -43,3 +43,6 @@ next-env.d.ts
 
 # GitHub App private key
 /secrets/
+
+# Database backups (contain real data)
+/backups/

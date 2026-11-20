@@ -8,6 +8,7 @@ import {
   STATE_COOKIE,
   sessionCookieOptions,
 } from "@/lib/session";
+import { recordAudit, upsertGithubUser } from "@/lib/users";
 
 type TokenResponse = { access_token?: string; error?: string };
 type GithubUser = {
@@ -79,18 +80,42 @@ export async function GET(request: Request) {
       { token: token.access_token },
     );
 
+    // Save the person in our database (created on first sign-in, refreshed after).
+    let saved: Awaited<ReturnType<typeof upsertGithubUser>>;
+    try {
+      saved = await upsertGithubUser({
+        githubId: user.id,
+        login: user.login,
+        name: user.name,
+        avatarUrl: user.avatar_url,
+      });
+    } catch {
+      return fail("db");
+    }
+    await recordAudit({
+      userId: saved.id,
+      actor: `user:${saved.id}`,
+      type: "auth.sign_in",
+      data: {
+        mode: "github",
+        login: saved.login,
+        installations: installations.length,
+      },
+    });
+
     const session = encodeSession({
       mode: "github",
-      uid: String(user.id),
-      login: user.login,
-      name: user.name,
-      avatar: user.avatar_url,
+      uid: saved.id,
+      login: saved.login,
+      name: saved.name,
+      avatar: saved.avatar_url,
       installations: installations.map((item) => item.id),
     });
 
     // Nothing installed yet: send them to GitHub's install page. GitHub
     // returns here again with the new installation after they choose repos.
-    let destination: URL | string = appUrl("/home");
+    // Otherwise, the loading page runs and then lands on /home.
+    let destination: URL | string = appUrl("/auth/callback");
     let newState: string | null = null;
     if (installations.length === 0) {
       newState = randomBytes(16).toString("hex");

@@ -127,74 +127,85 @@ body {
   }
 }
 
-/* ---------- Auth: isometric Rox stack ---------- */
-.stack-slab {
-  animation: slab-glow 10s ease-in-out infinite;
+/* ---------- Auth: Rox hub animation ---------- */
+.hub-slab {
+  animation: hub-glow 8s ease-in-out infinite;
   animation-delay: calc(var(--i) * 2s);
 }
 
-@keyframes slab-glow {
+@keyframes hub-glow {
   0%,
-  22%,
+  26%,
   100% {
-    fill: #fbfbf8;
-    stroke: rgba(43, 58, 48, 0.38);
+    fill: #ffffff;
+    stroke: rgba(43, 58, 48, 0.4);
   }
-  5%,
-  17% {
+  4%,
+  22% {
     fill: #dff1e6;
     stroke: #2f7d4f;
   }
 }
 
-.stack-guard {
-  animation: guard-glow 10s ease-in-out infinite;
-  animation-delay: calc(var(--i) * 2s);
+.hub-flow {
+  stroke-dasharray: 5 9;
+  animation: hub-flow 1.3s linear infinite;
 }
 
-@keyframes guard-glow {
-  0%,
-  22%,
-  100% {
-    fill-opacity: 0.06;
-  }
-  5%,
-  17% {
-    fill-opacity: 0.3;
+@keyframes hub-flow {
+  to {
+    stroke-dashoffset: -28;
   }
 }
 
-.stack-cube {
-  animation: cube-float 4s ease-in-out infinite;
+/* ---------- Auth: logo marquee ---------- */
+.marquee {
+  overflow: hidden;
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 10%,
+    #000 90%,
+    transparent
+  );
 }
 
-@keyframes cube-float {
-  0%,
-  100% {
-    transform: translateY(0);
+.marquee__track {
+  display: flex;
+  width: max-content;
+  animation: marquee 38s linear infinite;
+}
+
+.marquee__track--reverse {
+  animation-direction: reverse;
+}
+
+.marquee:hover .marquee__track {
+  animation-play-state: paused;
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
   }
-  50% {
-    transform: translateY(-7px);
+  to {
+    transform: translateX(-50%);
   }
 }
 
-.stack-caption {
-  opacity: 0;
-  animation: caption 10s ease-in-out infinite;
-  animation-delay: calc(var(--i) * 2s);
+/* ---------- Toast ---------- */
+.toast {
+  animation: toast-in 0.3s ease-out both;
 }
 
-@keyframes caption {
-  0%,
-  22%,
-  100% {
+@keyframes toast-in {
+  from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translate(-50%, -10px);
   }
-  5%,
-  17% {
+  to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translate(-50%, 0);
   }
 }
 
@@ -206,19 +217,20 @@ body {
   .wheel,
   .puff,
   .twinkle,
-  .stack-slab,
-  .stack-guard,
-  .stack-cube {
+  .hub-slab,
+  .hub-flow,
+  .marquee__track,
+  .toast {
     animation: none;
   }
   .puff {
     opacity: 0.3;
   }
-  .stack-caption {
-    animation: none;
+  .hub-flow {
+    stroke-dasharray: none;
   }
-  .stack-caption:last-child {
-    opacity: 1;
+  .toast {
+    transform: translate(-50%, 0);
   }
 }
 

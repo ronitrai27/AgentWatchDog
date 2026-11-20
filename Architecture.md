@@ -351,7 +351,9 @@ Rox has two ways in. **Quick Judge Mode** (`user_id = demo`) needs no account: i
 One public GitHub App, **Rox WatchDog** (`rox-watchdog`), is registered once by the project owner. Users install it on the repos they choose; they never create webhooks. We use a GitHub App rather than an OAuth app because an OAuth `repo` scope means full control of every private repo, while an App shows a short permission list and a repo picker.
 
 - **Sign-in and install in one step:** "Request user authorization during installation" is on, so GitHub redirects to `/api/auth/github/callback` with `code` and `installation_id`. The callback exchanges the code, then checks that the installation really belongs to the signed-in user (`GET /user/installations`) before saving anything.
-- **Stored per user:** the GitHub user id and the installation id. No GitHub token is stored. Until the Postgres layer exists, the verified installation ids live in a signed, HTTP-only session cookie (`rox_session`, HMAC-signed with `SESSION_SECRET`, 7 days). The agent service will need an installation-to-user table in Postgres to route webhooks. Each run mints a 1-hour installation token for one repo, read-only for Investigate and write only inside Publish.
+- **Stored per user:** the GitHub user id and the installation id. No GitHub token is stored. Every sign-in creates or refreshes a row in the `users` table and appends an `auth.sign_in` event to the audit log (sign-out appends `auth.sign_out`). The browser session is still a signed, HTTP-only cookie (`rox_session`, HMAC-signed with `SESSION_SECRET`, 7 days) holding the database user id and the verified installation ids. The agent service will need an installation-to-user table in Postgres to route webhooks; that table does not exist yet.
+- **Quick Judge Mode users:** each visit to `/api/auth/demo` creates a new user (random `user-xxxxxxxx` login, display name "User", `is_demo = true`, no GitHub id), so judges never share an identity and never install anything or share credentials.
+- **Sign-in landing:** both paths end at `/auth/callback`, which shows "Starting Agent server", "Loading environment" and "Checking server health", then goes to `/home?welcome=1` for a welcome toast. Only the last step is a real check: `GET /api/health` runs `SELECT 1` against Postgres and confirms the server is configured. The first two steps are timed placeholders until the agent service exists. If the check fails the page shows an error with "Try again". Each run mints a 1-hour installation token for one repo, read-only for Investigate and write only inside Publish.
 - **One webhook for all repos:** `POST /api/ingest/github`, signature-checked. The installation id maps an event to a user. `installation` and `installation_repositories` events keep the repo list current when users add or remove repos.
 - **Permissions requested:** Metadata read; Contents read and write; Pull requests read and write; Checks read; Actions read. Not requested: Workflows (GitHub then blocks edits to `.github/workflows/` as a second layer behind `protected_paths`), Administration, Secrets, Issues. Events: Push, Check suite, Workflow run, Pull request.
 - **Not covered by the App:** Sentry, Vercel and Datadog alerts still need a per-user webhook URL (`/api/ingest/:userId/...`).
@@ -365,7 +367,12 @@ One public GitHub App, **Rox WatchDog** (`rox-watchdog`), is registered once by 
 - **Auth:**
   - **Dashboard & API:** Real mode uses a signed HTTP-only session cookie issued after GitHub sign-in (see 9.1); Judge Mode gets a session for `demo`. The `awd` CLI uses a bearer token stored hashed in Postgres. Self-hosters can skip GitHub sign-in with a local setup token.
   - **App connections & webhooks:** Incoming webhooks verify HMAC signatures. Your connected OAuth/API tokens (GitHub App PEM, Slack, Linear, Sentry, TestSprite, MCPs) are encrypted at rest in Postgres (`AES-256-GCM` via `ENCRYPTION_KEY`) and decrypted only inside the Tool Proxy.
-- **Database (single Postgres instance):** Holds LangGraph `PostgresSaver` checkpoints, the `SKIP LOCKED` job queue, idempotency outbox, encrypted connections vault, append-only audit log, and incident memory.
+- **Database (single Postgres 17 instance, in Docker next to the agent):** Holds LangGraph `PostgresSaver` checkpoints, the `SKIP LOCKED` job queue, idempotency outbox, encrypted connections vault, append-only audit log, and incident memory. Only `users` and `audit_events` exist so far; other tables are added as the features that need them are built.
+  - **Placement:** The database runs wherever the agent runs, on the same host, bound to `127.0.0.1` only. It is never reachable from the network, and the Vercel UI never connects to it (the UI talks to the agent API). There is no cold start and no network hop. `DATABASE_URL` is the only setting, so a hosted Postgres can be swapped in later; if so, use a direct connection (not a transaction pooler), because the queue and checkpointer need advisory locks and session features.
+  - **Durability:** Data lives on the named Docker volume `rox_rox_pgdata`, which survives container removal. `pnpm db:backup` writes a verified `pg_dump` to `backups/` (git-ignored), keeps the newest 14, and also copies to `BACKUP_COPY_DIR` when set. A backup that stays on the same disk does not count; point `BACKUP_COPY_DIR` at another drive or synced folder, and schedule the command nightly. `pnpm db:restore <file> --into rox_restore_check` proves a backup restores.
+  - **Two roles:** `rox_owner` runs migrations and backups. `rox_app` is what the services use: it can read and append audit rows, never change or remove them, and cannot delete users.
+  - **Tamper-evident audit log:** `audit_events` is append-only for every role (triggers block update, delete and truncate). Each row stores the SHA-256 hash of the row before it; the database assigns the sequence number, timestamp and hash so callers cannot choose them. `audit_chain_status()` recomputes the chain and reports the first bad row. Known limit: removing rows from the very end of the log is not detectable from inside the database, so the latest hash should also be recorded outside it (a run's trace, Slack report or backup).
+  - **Migrations:** plain SQL files in `agent/migrations/`, applied once each by `scripts/migrate.mjs`, with a checksum so an applied file cannot be edited silently. `pnpm db:selftest` proves the guarantees above on a throwaway database.
 
 ## 10. Zero-friction setup (for strangers)
 
@@ -386,7 +393,11 @@ Planned commands (not yet implemented):
 
 | Command | Does |
 |---|---|
-| `docker compose up` | Starts Postgres, worker/agent service, and optional webhook relay |
+| `docker compose up` | Starts Postgres, worker/agent service, and optional webhook relay (today: Postgres only) |
+| `pnpm db:up` / `pnpm db:migrate` | Starts Postgres and applies pending migrations (built) |
+| `pnpm db:backup` / `pnpm db:restore` | Verified backup and restore (built) |
+| `pnpm db:selftest` | Proves append-only, tamper detection, concurrency and latency on a scratch database (built) |
+| `pnpm db:psql` | Opens a SQL shell inside the container (built) |
 | `pnpm dev` | Starts the Web UI (dashboard, trace viewer, `/setup` wizard) |
 | `awd init` | Interactive CLI onboarding + repo `.agentwatchdog.yml` auto-detection |
 | `awd demo` | Runs the seeded bug in `demo-app/` end to end |
@@ -422,4 +433,7 @@ Planned commands (not yet implemented):
 | `trap-results/` | Committed results of trap runs |
 | `demo-app/` | Seeded buggy app for the 60-second demo |
 | `docker/` | Dockerfiles, sandbox base image, compose files |
-| `scripts/`, `docs/` | Helper scripts, `Research.md`, extra docs |
+| `agent/migrations` | Numbered SQL migrations (`0001_init.sql`: users and audit log) |
+| `compose.yaml` | Postgres service with the named volume `rox_pgdata` |
+| `backups/` | Local database dumps (git-ignored, contains real data) |
+| `scripts/`, `docs/` | Database scripts (migrate, backup, restore, selftest), `Research.md`, extra docs |

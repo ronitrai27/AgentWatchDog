@@ -1,13 +1,24 @@
 import { redirect } from "next/navigation";
 import { RoxMark } from "@/components/site-header";
+import { WelcomeToast } from "@/components/welcome-toast";
 import { getSession } from "@/lib/session";
 
-export default async function HomePage() {
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const session = await getSession();
   if (!session) redirect("/auth");
 
+  // Quick Judge Mode users are all called "User".
+  const displayName =
+    session.mode === "demo" ? "User" : (session.name ?? session.login);
+  const justSignedIn = (await searchParams).welcome === "1";
+
   return (
     <div className="min-h-svh bg-paper">
+      {justSignedIn && <WelcomeToast name={displayName} />}
       <header className="mx-auto flex w-full max-w-4xl items-center justify-between px-4 py-4 sm:px-6">
         <a href="/" className="flex items-center gap-2 text-ink">
           <RoxMark />
@@ -26,7 +37,7 @@ export default async function HomePage() {
               height={28}
             />
           )}
-          <span>{session.login}</span>
+          <span>{displayName}</span>
           <form action="/api/auth/logout" method="post">
             <button
               type="submit"
