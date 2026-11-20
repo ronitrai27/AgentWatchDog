@@ -73,3 +73,7 @@ Baseline diff: block only on new findings.
 Severity policy as code: committed file, auditable.
 Evidence bundle per PR: SARIF, mutation score, k6 report and SBOM, all linked in the trace.
 Scanner versions pinned, rule databases baked into the image, so a run is reproducible offline.
+
+================================================================================
+
+covers GitHub events only (failed checks, pushes, PR outcomes). Sentry, Vercel and Datadog alerts still need their own webhook URL pointed at Rox. In Judge Mode those alerts are simulated, so judges won’t need them.

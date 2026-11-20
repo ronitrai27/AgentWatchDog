@@ -90,33 +90,30 @@ Files: Architecture.md, docs/Research.md
 **Why:** An air-gapped container cannot run `pnpm install` or hold a TestSprite API key to reach TestSprite's cloud runners; host-side tunneling preserves zero egress and zero secrets inside the sandbox.
 **Consequence:** Adds a lockfile-keyed image/cache build step and a host-side tunnel bridge component (`agent/src/tools`).
 
-
-
-
-## D-008 Brand name and first UI (landing + auth)
-Date: 2026-11-19 | Status: Proposed
-Files: src/app/layout.tsx, src/app/globals.css, src/app/(web)/page.tsx, src/app/(auth)/auth/page.tsx, src/components/*, public/auth-sketch.svg
-
-**Your decision:** The agent is named "Rox". Landing page in `(web)` with a hero in the style of reference 2 and the engraved "meridian" footer; auth page in `(auth)` in the style of reference 3 with a person sketch and two placeholder buttons, "Continue with GitHub" and "Quick Judge Mode". The footer spec (tokens, video, CSS, breakpoints) was given in full.
-**Agent's decision:** Footer reproduced as specified, rebranded to "rox" with product nav and tagline. One shared sage palette for all pages rather than the beige of reference 3. The hero shows a labelled sample run trace and a strip of real integration names; no invented customer logos or testimonials. The auth quote is product copy with no fake person attributed. The sketch is a hand-drawn placeholder SVG. Both buttons do nothing yet.
-**Why:** Invented customers and quotes would be false claims on a hackathon product that judges will read. One palette keeps the footer's multiply-blend seamless.
-**Consequence:** Buttons need real handlers once auth and demo workspace exist. The footer video is a third-party CDN URL and the page depends on it. Fonts load through `next/font` (Fraunces, Inter) instead of the Google Fonts link in the spec.
-
-## D-009 Animated sample run in the hero; footer video retry
-Date: 2026-11-19 | Status: Proposed
-Files: src/components/run-panel.tsx, src/components/hero.tsx, src/components/rox-footer.tsx
-
-**Your decision:** Hero headline "For Developers Who Swear, It Wasn't Their Fault." with subheading "Production breaks at 3 a.m. Rox is already on it." The white dashboard should look realistic: Rox working, tracing, security scans, testing. The footer video was not showing on your screen.
-**Agent's decision:** A client-side panel replays a scripted sample run on a loop: stepper, append-only trace with ALLOW/DENY/PASS verdicts (including a blocked injection attempt), a 12-gate verification matrix (reproduction, mutation, property tests, k6, Semgrep, Gitleaks, OSV, ZAP, BOLA) and an outputs bar. It is captioned as a simulated run with sample data. The footer video now also retries playback on first interaction, because low-power or battery-saver modes can block autoplay.
-**Why:** It shows the product's flow and guardrails without a backend, and the caption keeps it honest. The video URL itself returned 200 and played in testing.
-**Consequence:** The gates shown (mutation, property tests, k6, Semgrep, ZAP, BOLA) are the planned design, not built yet; Architecture.md §4 still lists the older stages. The footer shows no bridge until the video plays, since there is no poster image.
-
-## D-010 Footer video replaced by a vector scene; auth page rebuilt
+## D-011 GitHub App for real mode, Quick Judge Mode for everyone else
 Date: 2026-11-20 | Status: Proposed
-Files: src/components/viaduct-scene.tsx, src/components/rox-footer.tsx, src/components/rox-stack.tsx, src/components/connection-logos.tsx, src/app/(auth)/auth/page.tsx, src/app/globals.css
-Supersedes the video and sketch parts of D-008 and the video retry part of D-009.
+Files: Architecture.md (§9.1, §9 auth, §10), .env.example, .gitignore
+Supersedes the single-owner statement in D-001-era Architecture §9. Refines the manifest flow in §10, which is now self-host only.
 
-**Your decision:** The footer video did not show for you, so use something else. Remove the sketch. New footer slogan ("Built to run overnight. Reproduces real failures, audits every change, and closes the loop across your stack."). New auth heading and slogan about 3 a.m. incidents and halting in code. On the auth right side, an isometric vector animation of Rox working, in the style of your reference, with the connection logos from `public/` below it.
-**Agent's decision:** The footer scene is now inline SVG and CSS: an engraved stone viaduct, night sky, and a steam train that crosses on a loop. No external file, so it cannot fail to load. The auth animation is a five-layer stack (Signal, Reproduce, Guardrails, Verify, Publish) that lights up in turn with a caption of what Rox is doing. GitHub and Vercel logos are drawn inline because `vercel-color.svg` in `public/` contains only the text "404: Not Found". Sentry and Linear files are white, so they are darkened with a CSS filter.
-**Why:** The video depended on a third-party CDN and on the visitor's browser allowing autoplay; the vector scene has neither problem. Layer labels reuse the architecture's real stages.
-**Consequence:** `public/vercel-color.svg` is still broken and unused; replace it if you want the official Vercel logo. Reduced-motion users see a still train and a static stack. The stack captions show sample numbers.
+**Your decision:** Use a GitHub App so users and judges who want to test for real install Rox on as many repos as they pick, with a clear Rox identity and no webhook setup. Everyone else uses Quick Judge Mode. The App is registered as "Rox WatchDog" (App ID 5843582) with the webhook at a smee.io relay URL for development.
+**Agent's decision:** One shared public App for the hosted demo. Sign-in and install happen in one step, and the callback verifies the installation belongs to the signed-in user. Only the installation id is stored; each run mints a 1-hour, single-repo token, read-only except inside Publish. Planned permissions: Metadata read, Contents read and write, Pull requests read and write, Checks read, Actions read; no Workflows, Administration, Secrets or Issues. Rejected: OAuth `repo` scope (full control of all repos) and personal access tokens (manual paste).
+**Why:** The consent screen shows a short, honest permission list with a repo picker, and the missing Workflows permission makes GitHub itself block edits to CI files.
+**Consequence:** The live App as registered on 2026-11-20 does NOT match this plan: it has Workflows, Statuses, Security events, Issues and Repository webhooks write, lacks Contents and Actions, and subscribes to check_run, issues and pull_request but not push or workflow_run. It must be corrected on GitHub before anyone installs it. Contents write can push to any unprotected branch, so users should protect `main`. Sentry, Vercel and Datadog alerts still need their own webhook URL.
+
+## D-012 Sign-in slice: signed cookie session, no database yet
+Date: 2026-11-20 | Status: Proposed
+Files: src/lib/session.ts, src/lib/github-app.ts, src/app/api/auth/**, src/app/(app)/dashboard/page.tsx, src/app/(auth)/auth/page.tsx, .env.example
+
+**Your decision:** Continue building sign-up with the GitHub App; ignore remaining permission mismatches for now.
+**Agent's decision:** Sign-in uses the App's own authorization (identity only). The callback checks a CSRF state cookie, exchanges the code, reads the user and `GET /user/installations` (which proves the installation belongs to them), then discards the user token. The session is an HMAC-signed HTTP-only cookie holding the user id, login and verified installation ids. No Postgres yet. The dashboard reads each installation with an App JWT and lists repos using a token minted with `metadata: read` only, and flags any permission beyond what Rox needs. Quick Judge Mode sets a `demo` session. Rejected: storing user tokens, and adding Postgres in this slice.
+**Why:** It is the smallest flow that is fully verifiable now, and it keeps GitHub credentials out of storage. The permission audit turns the "short, honest permissions" promise into something users can see.
+**Consequence:** Installations are not mapped to users server-side, so the agent service cannot route webhooks to a user until the Postgres table exists. The live App still grants Workflows, Issues, Statuses, Security events and Repository webhooks (write) and subscribes to the wrong events; the dashboard shows these as "Broader than Rox needs" until the App is corrected. Cookie sessions cannot be revoked server-side before expiry.
+
+## D-013 Signed-in landing is /home and starts empty
+Date: 2026-11-20 | Status: Proposed
+Files: src/app/(app)/home/page.tsx, src/app/api/auth/demo/route.ts, src/app/api/auth/github/callback/route.ts
+
+**Your decision:** Rename `/dashboard` to `/home`, remove the installation and permissions panels from it, and leave it empty for now.
+**Agent's decision:** `/home` shows only the header (Rox mark, user, Sign out) behind the session check. Both sign-in paths redirect there. The old `/dashboard` route no longer exists. The permissions audit code stays in `src/lib/github-app.ts` unused, so it can come back on a settings page.
+**Why:** Matches the request, and keeps the audit logic from being rewritten later.
+**Consequence:** Users cannot currently see which repos Rox can reach or change them from inside Rox, only on GitHub. Your App was installed on "All repositories", which is wider than needed; narrow it at github.com/settings/installations.

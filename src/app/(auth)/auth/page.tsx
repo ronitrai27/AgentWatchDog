@@ -17,7 +17,22 @@ function GithubIcon() {
   );
 }
 
-export default function AuthPage() {
+const ERRORS: Record<string, string> = {
+  denied: "GitHub sign-in was cancelled. Nothing was changed.",
+  state: "That sign-in link expired or did not start here. Please try again.",
+  token: "GitHub did not accept the sign-in. Please try again.",
+  github: "GitHub could not be reached. Please try again.",
+  not_configured: "GitHub sign-in is not configured on this server yet.",
+};
+
+export default async function AuthPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const { error } = await searchParams;
+  const message = typeof error === "string" ? ERRORS[error] : undefined;
+
   return (
     <main className="relative grid min-h-svh bg-paper lg:grid-cols-2">
       <Link
@@ -47,23 +62,33 @@ export default function AuthPage() {
           </p>
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-            <button
-              type="button"
-              className="flex items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-ink px-5 py-3 text-sm font-medium text-paper transition-opacity hover:opacity-90"
+            {/* Plain anchors: these are API routes, so no client-side prefetch */}
+            <a
+              href="/api/auth/github/start"
+              className="flex items-center justify-center gap-2 whitespace-nowrap rounded bg-ink px-5 py-3 text-sm font-medium text-paper transition-opacity hover:opacity-90"
             >
               <GithubIcon />
               Continue with GitHub
-            </button>
-            <button
-              type="button"
-              className="whitespace-nowrap rounded-xl border border-ink/50 px-5 py-3 text-sm font-medium text-ink transition-colors hover:bg-ink/5"
+            </a>
+            <a
+              href="/api/auth/demo"
+              className="whitespace-nowrap rounded! border border-ink/50 px-5 py-3 text-center text-sm font-medium text-ink transition-colors hover:bg-ink/5"
             >
               Quick Judge Mode
-            </button>
+            </a>
           </div>
+          {message && (
+            <p
+              role="alert"
+              className="mt-4 border border-[#b4443a]/40 bg-[#b4443a]/8 px-3 py-2 text-sm text-[#9a352c]"
+            >
+              {message}
+            </p>
+          )}
           <p className="mt-4 text-xs text-muted">
-            Judge Mode runs on a bundled demo app. No account, keys or
-            credentials needed.
+            GitHub only asks to verify who you are, then you pick which repos
+            Rox can see. Judge Mode runs on a bundled demo app. No account, keys
+            or credentials needed.
           </p>
         </div>
       </section>

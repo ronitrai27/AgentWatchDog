@@ -342,17 +342,28 @@ sequenceDiagram
 
 All three surfaces (Slack Block Kit button, Web UI, `awd approve` CLI) resolve the same LangGraph thread and single-use signed token. Timeout counts as rejection.
 
-## 9. UI, Auth, and Database (Individual-first)
+## 9. UI, Auth, and Database (per-user, no teams)
 
-AgentWatchdog is single-owner software — **no multi-tenant organizations, teams, or RBAC complexity**.
+Rox has two ways in. **Quick Judge Mode** (`user_id = demo`) needs no account: it runs the bundled `demo-app/` against mock GitHub, Linear and Slack adapters. **Real mode** is for people who sign in with GitHub and install the Rox GitHub App on their own repos. Every user is an individual with their own repos and connections. There are **no organizations, teams or RBAC**.
+
+### 9.1 GitHub identity and repo access (real mode)
+
+One public GitHub App, **Rox WatchDog** (`rox-watchdog`), is registered once by the project owner. Users install it on the repos they choose; they never create webhooks. We use a GitHub App rather than an OAuth app because an OAuth `repo` scope means full control of every private repo, while an App shows a short permission list and a repo picker.
+
+- **Sign-in and install in one step:** "Request user authorization during installation" is on, so GitHub redirects to `/api/auth/github/callback` with `code` and `installation_id`. The callback exchanges the code, then checks that the installation really belongs to the signed-in user (`GET /user/installations`) before saving anything.
+- **Stored per user:** the GitHub user id and the installation id. No GitHub token is stored. Until the Postgres layer exists, the verified installation ids live in a signed, HTTP-only session cookie (`rox_session`, HMAC-signed with `SESSION_SECRET`, 7 days). The agent service will need an installation-to-user table in Postgres to route webhooks. Each run mints a 1-hour installation token for one repo, read-only for Investigate and write only inside Publish.
+- **One webhook for all repos:** `POST /api/ingest/github`, signature-checked. The installation id maps an event to a user. `installation` and `installation_repositories` events keep the repo list current when users add or remove repos.
+- **Permissions requested:** Metadata read; Contents read and write; Pull requests read and write; Checks read; Actions read. Not requested: Workflows (GitHub then blocks edits to `.github/workflows/` as a second layer behind `protected_paths`), Administration, Secrets, Issues. Events: Push, Check suite, Workflow run, Pull request.
+- **Not covered by the App:** Sentry, Vercel and Datadog alerts still need a per-user webhook URL (`/api/ingest/:userId/...`).
+- **Disclosure:** the stack trace and the relevant files of a private repo are sent to the configured model provider.
 
 - **Web UI (`src/`, Next.js App Router):** Thin client over the agent's HTTP + SSE API:
   - **Live Monitor (`/`):** Active runs, current graph node, token/cost used, and 1-click Kill Switch.
   - **Trace & Diff Viewer (`/runs/[id]`):** Step-by-step audit log, before/after test exit codes, TestSprite report, diff, and PR/Linear/Slack links.
   - **Approvals (`/approvals`):** Pending HITL actions (`Approve` / `Reject`).
   - **Connections & Setup (`/setup`, `/connections`):** Connect **your** GitHub, Sentry, Linear, Slack, TestSprite, and custom MCPs via OAuth/tokens with live **Test Connection** buttons.
-- **Auth (single-owner):**
-  - **Dashboard & API:** Protected by a single-owner local passphrase / auto-generated setup token stored hashed in Postgres (HTTP-only session cookie for the UI; bearer token for `awd` CLI). Zero external auth service required.
+- **Auth:**
+  - **Dashboard & API:** Real mode uses a signed HTTP-only session cookie issued after GitHub sign-in (see 9.1); Judge Mode gets a session for `demo`. The `awd` CLI uses a bearer token stored hashed in Postgres. Self-hosters can skip GitHub sign-in with a local setup token.
   - **App connections & webhooks:** Incoming webhooks verify HMAC signatures. Your connected OAuth/API tokens (GitHub App PEM, Slack, Linear, Sentry, TestSprite, MCPs) are encrypted at rest in Postgres (`AES-256-GCM` via `ENCRYPTION_KEY`) and decrypted only inside the Tool Proxy.
 - **Database (single Postgres instance):** Holds LangGraph `PostgresSaver` checkpoints, the `SKIP LOCKED` job queue, idempotency outbox, encrypted connections vault, append-only audit log, and incident memory.
 
@@ -363,7 +374,8 @@ Anyone should be able to try Demo Mode in 60 seconds and connect their own stack
 1. **Instant Demo Mode (`awd demo`):** Needs only `OPENAI_API_KEY` (or configured model key). Uses `docker compose up`, the bundled `demo-app/`, seeded webhook fixtures, and local Slack/Linear preview files.
 2. **Guided Setup Wizard (`awd init` or Web UI `/setup`):**
    - **Preflight check:** Verifies Docker socket access, Postgres readiness, sandbox base image, and LLM key.
-   - **1-Click GitHub App Manifest Flow:** The `/setup` page posts a least-privilege GitHub App manifest to `github.com/settings/apps/new`. You click **Create GitHub App**, GitHub redirects back with a temporary `code`, and the backend exchanges it automatically for `APP_ID`, `WEBHOOK_SECRET`, and the private `.pem` key — no manual permission checkboxes or key copy-pasting.
+   - **Hosted versus self-hosted GitHub App:** The hosted demo uses the single registered Rox WatchDog App (section 9.1); users only install it. The manifest flow below is for **self-hosters** who need their own App.
+   - **1-Click GitHub App Manifest Flow (self-host):** The `/setup` page posts a least-privilege GitHub App manifest to `github.com/settings/apps/new`. You click **Create GitHub App**, GitHub redirects back with a temporary `code`, and the backend exchanges it automatically for `APP_ID`, `WEBHOOK_SECRET`, and the private `.pem` key — no manual permission checkboxes or key copy-pasting.
    - **Built-in Webhook Relay (`awd tunnel`):** Optional tunnel profile (Cloudflare Quick Tunnel / `smee.io`) gives your local machine an instant public HTTPS webhook URL for GitHub, Sentry, and Slack without configuring DNS or ngrok.
    - **Auto-Detected `.agentwatchdog.yml`:** Scans your target repository (`package.json`, `pyproject.toml`, `Dockerfile`, `.github/workflows`) to pre-populate build, test, and start commands plus protected paths, then runs a **1-click Sandbox Dry-Run** to verify builds and tests pass before real incidents arrive.
    - **Connection Status Board:** Interactive cards to connect your Sentry, Linear, Slack (OAuth / API token), TestSprite, and custom MCP servers with **"Test Connection"** buttons and clear previews of what skips gracefully if disconnected.
