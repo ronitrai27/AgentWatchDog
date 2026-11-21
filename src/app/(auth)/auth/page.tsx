@@ -2,7 +2,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { AuthButtons } from "@/components/auth-buttons";
 import { LogoMarquee } from "@/components/logo-marquee";
+import { ResumeSession } from "@/components/resume-session";
 import { RoxHub } from "@/components/rox-hub";
+import { Toast } from "@/components/toast";
+import { getSession } from "@/lib/session";
 
 const ERRORS: Record<string, string> = {
   denied: "GitHub sign-in was cancelled. Nothing was changed.",
@@ -13,19 +16,39 @@ const ERRORS: Record<string, string> = {
   not_configured: "GitHub sign-in is not configured on this server yet.",
 };
 
+const NOTICES: Record<string, string> = {
+  github: "Recommended: sign in with GitHub for a real try.",
+  judge: "Log in with Quick Judge Mode to try the demo.",
+};
+
 export default async function AuthPage({
   searchParams,
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
-  const { error } = await searchParams;
+  // Already signed in (GitHub or Judge Mode, and not expired): skip this page.
+  const session = await getSession();
+  if (session) {
+    return (
+      <ResumeSession
+        name={
+          session.mode === "demo" ? "User" : (session.name ?? session.login)
+        }
+      />
+    );
+  }
+
+  const { error, notice } = await searchParams;
   const message = typeof error === "string" ? ERRORS[error] : undefined;
+  // Set by the logout buttons in the Home header (see api/auth/logout).
+  const noticeText = typeof notice === "string" ? NOTICES[notice] : undefined;
 
   return (
     <main className="grid min-h-svh lg:grid-cols-2">
-      <section className="relative flex items-center bg-paper px-6 pb-10 pt-24 sm:px-12 lg:px-20 lg:py-24">
+      {noticeText && <Toast message={noticeText} duration={7000} />}
+      <section className="relative flex flex-col justify-center bg-paper px-6 pb-10 pt-24 sm:px-12 lg:px-20 lg:pb-52 lg:pt-24">
         <Link
-          href="/"
+          href="/auth"
           className="absolute left-5 top-5 flex items-center gap-2.5 text-ink sm:left-8 sm:top-7"
         >
           <Image
@@ -62,12 +85,31 @@ export default async function AuthPage({
               {message}
             </p>
           )}
-          <p className="mt-4 text-xs leading-relaxed text-muted">
-            GitHub only asks to verify who you are, then you pick which repos
-            Rox can see. Quick Judge Mode needs no GitHub account, keys or
-            credentials.
-          </p>
         </div>
+
+        <aside
+          aria-label="Which sign-in to use"
+          className="mt-10 w-full max-w-md border rounded border-ink bg-white/40 lg:absolute lg:bottom-10 lg:left-20 lg:right-20 lg:mt-0"
+        >
+          <p className="flex items-start gap-3 border-b border-ink/20 p-4 text-[12px] leading-snug text-ink">
+            <span className="mt-0.5 shrink-0 rounded bg-ink/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider text-ink">
+              Quick look
+            </span>
+            <span>
+              If you want a quick demo with no or low setup, try{" "}
+              <strong>Quick Judge Mode</strong>.
+            </span>
+          </p>
+          <p className="flex items-start gap-3 p-4 text-[12px] leading-snug text-ink">
+            <span className="mt-0.5 shrink-0 rounded bg-[#2f7d4f] px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-white">
+              Recommended
+            </span>
+            <span>
+              For personal and real use, use <strong>GitHub</strong>. It only
+              asks to verify who you are.
+            </span>
+          </p>
+        </aside>
       </section>
 
       <section className="flex min-h-[640px] flex-col bg-white lg:min-h-svh">

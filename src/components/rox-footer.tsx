@@ -67,7 +67,7 @@ export function RoxFooter() {
         </svg>
 
         <p className="footer__brand">
-          <a href="/" aria-label="Rox home">
+          <a href="/web" aria-label="Rox home">
             rox
           </a>
         </p>

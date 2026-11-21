@@ -5,6 +5,7 @@ export type DbUser = {
   id: string;
   login: string;
   name: string | null;
+  email: string | null;
   avatar_url: string | null;
   is_demo: boolean;
 };
@@ -14,18 +15,20 @@ export async function upsertGithubUser(input: {
   githubId: number;
   login: string;
   name: string | null;
+  email: string | null;
   avatarUrl: string | null;
 }): Promise<DbUser> {
   const { rows } = await db().query<DbUser>(
-    `INSERT INTO users (github_id, login, name, avatar_url)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO users (github_id, login, name, email, avatar_url)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (github_id) DO UPDATE
        SET login = EXCLUDED.login,
            name = EXCLUDED.name,
+           email = EXCLUDED.email,
            avatar_url = EXCLUDED.avatar_url,
            last_seen_at = now()
-     RETURNING id, login, name, avatar_url, is_demo`,
-    [input.githubId, input.login, input.name, input.avatarUrl],
+     RETURNING id, login, name, email, avatar_url, is_demo`,
+    [input.githubId, input.login, input.name, input.email, input.avatarUrl],
   );
   return rows[0];
 }
@@ -39,7 +42,7 @@ export async function createJudgeUser(): Promise<DbUser> {
   const { rows } = await db().query<DbUser>(
     `INSERT INTO users (login, name, is_demo)
      VALUES ($1, 'User', true)
-     RETURNING id, login, name, avatar_url, is_demo`,
+     RETURNING id, login, name, email, avatar_url, is_demo`,
     [login],
   );
   return rows[0];

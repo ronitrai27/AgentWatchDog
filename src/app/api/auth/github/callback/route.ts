@@ -15,6 +15,8 @@ type GithubUser = {
   id: number;
   login: string;
   name: string | null;
+  /** Only the public email; Rox does not request the email permission. */
+  email: string | null;
   avatar_url: string | null;
 };
 
@@ -87,6 +89,7 @@ export async function GET(request: Request) {
         githubId: user.id,
         login: user.login,
         name: user.name,
+        email: user.email,
         avatarUrl: user.avatar_url,
       });
     } catch {
@@ -108,6 +111,7 @@ export async function GET(request: Request) {
       uid: saved.id,
       login: saved.login,
       name: saved.name,
+      email: saved.email,
       avatar: saved.avatar_url,
       installations: installations.map((item) => item.id),
     });

@@ -353,14 +353,37 @@ One public GitHub App, **Rox WatchDog** (`rox-watchdog`), is registered once by 
 - **Sign-in and install in one step:** "Request user authorization during installation" is on, so GitHub redirects to `/api/auth/github/callback` with `code` and `installation_id`. The callback exchanges the code, then checks that the installation really belongs to the signed-in user (`GET /user/installations`) before saving anything.
 - **Stored per user:** the GitHub user id and the installation id. No GitHub token is stored. Every sign-in creates or refreshes a row in the `users` table and appends an `auth.sign_in` event to the audit log (sign-out appends `auth.sign_out`). The browser session is still a signed, HTTP-only cookie (`rox_session`, HMAC-signed with `SESSION_SECRET`, 7 days) holding the database user id and the verified installation ids. The agent service will need an installation-to-user table in Postgres to route webhooks; that table does not exist yet.
 - **Quick Judge Mode users:** each visit to `/api/auth/demo` creates a new user (random `user-xxxxxxxx` login, display name "User", `is_demo = true`, no GitHub id), so judges never share an identity and never install anything or share credentials.
-- **Sign-in landing:** both paths end at `/auth/callback`, which shows "Starting Agent server", "Loading environment" and "Checking server health", then goes to `/home?welcome=1` for a welcome toast. Only the last step is a real check: `GET /api/health` runs `SELECT 1` against Postgres and confirms the server is configured. The first two steps are timed placeholders until the agent service exists. If the check fails the page shows an error with "Try again". Each run mints a 1-hour installation token for one repo, read-only for Investigate and write only inside Publish.
+- **Sign-in landing:** both paths end at `/auth/callback`, which shows "Starting Agent server", "Loading environment" and "Checking server health", then goes to `/home?welcome=1` for a welcome toast. Only the last step is a real check: `GET /api/health` runs `SELECT 1` against Postgres and confirms the server is configured. The first two steps are timed placeholders until the agent service exists. If the check fails the page shows an error with "Try again".
+- **Already signed in:** `/auth` checks the session first. A valid, unexpired session (GitHub or Judge) shows a "Welcome back" loading toast and goes straight to `/home`; the sign-in page is skipped.
+- **Route protection:** `src/proxy.ts` (Next 16's replacement for middleware, Node.js runtime) runs before every `/home` and `/home/*` request. No valid, unexpired session means a redirect to `/auth` and the bad cookie is cleared. `src/app/(app)/home/layout.tsx` checks the session again, so a page never renders for a signed-out visitor even if the proxy is bypassed.
+- **Mode badge and switch button:** the sidebar always shows the mode above Home. A judge session shows "Quick Demo Mode: On" (click for an explanation) and a header button "Try live in the real world", which signs out and returns to `/auth?notice=github` with a toast recommending GitHub. A real GitHub session shows a fixed "Quick Demo Mode: Off" label (not a switch) and a header button "Try Quick Judge Mode", which signs out and returns to `/auth?notice=judge` with a toast pointing to Quick Judge Mode. Logout accepts only the exact values `real` and `judge` for `reason`; anything else goes to plain `/auth`, so the redirect cannot be steered.
+- **Home content:** a setup guide for everyone. For GitHub users it tracks real progress (signed in, repositories chosen) and marks the rest "Coming next". For judges it is a walkthrough plus a table of what is real and what is test mode (9.2).
+- **Home shell:** every `/home` page sits inside a sidebar (logo, navigation, and the user's picture or first initial, name and email) and a header with a Logout button. Planned pages show as "Soon" until they exist. The email comes from the user's public GitHub profile (Rox does not request the email permission), so it is often empty; the sidebar then shows `@login`, or "Quick Judge session" for judges.
+- **Token minting:** each run mints a 1-hour installation token for one repo, read-only for Investigate and write only inside Publish.
 - **One webhook for all repos:** `POST /api/ingest/github`, signature-checked. The installation id maps an event to a user. `installation` and `installation_repositories` events keep the repo list current when users add or remove repos.
 - **Permissions requested:** Metadata read; Contents read and write; Pull requests read and write; Checks read; Actions read. Not requested: Workflows (GitHub then blocks edits to `.github/workflows/` as a second layer behind `protected_paths`), Administration, Secrets, Issues. Events: Push, Check suite, Workflow run, Pull request.
 - **Not covered by the App:** Sentry, Vercel and Datadog alerts still need a per-user webhook URL (`/api/ingest/:userId/...`).
 - **Disclosure:** the stack trace and the relevant files of a private repo are sent to the configured model provider.
 
+### 9.2 Quick Judge Mode (test mode)
+
+Rule: build against a test account or a sandbox, document how a judge can do the same, and never ask a judge for their own credentials. A judge session runs the same agent, graph and guardrails as a real session. Only the adapters at the edges differ, chosen by session mode (`is_demo`) behind one interface per integration.
+
+| Part of a run | Quick Judge Mode | Real mode |
+|---|---|---|
+| Alert source | Recorded fixture replayed into the ingest path | Your Sentry, Vercel or PostHog webhook |
+| Code, tests, k6, security scans | **Real**, in the local Docker sandbox, on the bundled `demo-app/` | **Real**, in the local Docker sandbox, on your repo |
+| Model | Operator's capped demo budget; optional bring-your-own key (the only credential a judge may give) | Your model key, stored encrypted |
+| Pull request | Real git branch `awd/*` and diff in a local repository, rendered as a PR card in Rox. Nothing is pushed anywhere. | Draft PR through the GitHub App |
+| Linear issue | Preview card stored in our database | Real issue |
+| Slack report and Approve | Preview card with a working Approve button that resumes the real paused run | Real Slack message and Block Kit button |
+| Fallback | Recorded trace replay if the demo budget is used up | n/a |
+
+Test-mode adapters write to our own tables so the UI renders them like the real thing. Every judge session has its own user, its own run data and its own audit trail.
+
 - **Web UI (`src/`, Next.js App Router):** Thin client over the agent's HTTP + SSE API:
-  - **Live Monitor (`/`):** Active runs, current graph node, token/cost used, and 1-click Kill Switch.
+  - **Routes:** `/` redirects to `/auth` (people come to see the agent, not a brochure). The marketing page is at `/web`. Signed-in pages live under `/home`.
+  - **Live Monitor (`/home`):** Active runs, current graph node, token/cost used, and 1-click Kill Switch.
   - **Trace & Diff Viewer (`/runs/[id]`):** Step-by-step audit log, before/after test exit codes, TestSprite report, diff, and PR/Linear/Slack links.
   - **Approvals (`/approvals`):** Pending HITL actions (`Approve` / `Reject`).
   - **Connections & Setup (`/setup`, `/connections`):** Connect **your** GitHub, Sentry, Linear, Slack, TestSprite, and custom MCPs via OAuth/tokens with live **Test Connection** buttons.

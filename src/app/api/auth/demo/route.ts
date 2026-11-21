@@ -32,6 +32,7 @@ export async function GET() {
       uid: user.id,
       login: user.login,
       name: "User",
+      email: null,
       avatar: null,
       installations: [],
     }),

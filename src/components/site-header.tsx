@@ -36,7 +36,7 @@ const LINKS = [
 export function SiteHeader() {
   return (
     <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-4 sm:px-6">
-      <Link href="/" className="flex items-center gap-2 text-ink">
+      <Link href="/web" className="flex items-center gap-2 text-ink">
         <RoxMark />
         <span className="font-serif text-xl font-semibold tracking-tight">
           rox
