@@ -1,0 +1,238 @@
+"use server";
+
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { revalidatePath } from "next/cache";
+import { db } from "@/lib/db";
+import {
+  DEMO_REPO,
+  findModel,
+  PROVIDERS,
+  type Provider,
+  type SavedKey,
+} from "@/lib/models";
+import { checkProviderKey } from "@/lib/provider-check";
+import { getSession } from "@/lib/session";
+import { listRepos } from "@/lib/setup";
+import { recordAudit } from "@/lib/users";
+import { encryptSecret } from "@/lib/vault";
+
+// Every action is a public endpoint, so each one checks the session and never
+// trusts what the browser sent.
+
+type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
+
+const run = promisify(execFile);
+const SIGNED_OUT = {
+  ok: false,
+  error: "Your session ended. Sign in again.",
+} as const;
+const NOT_SAVED = {
+  ok: false,
+  error: "Rox could not reach its database, so nothing was saved. Try again.",
+} as const;
+
+async function audit(
+  userId: string,
+  type: string,
+  data: Record<string, unknown>,
+) {
+  await recordAudit({ userId, actor: `user:${userId}`, type, data });
+}
+
+/** Refreshes the page and the repository shown in the sidebar. */
+const refresh = () => revalidatePath("/home", "layout");
+
+export async function saveRepo(name: string): Promise<Result> {
+  const session = await getSession();
+  if (!session) return SIGNED_OUT;
+
+  let installationId: number | null = null;
+  if (session.mode === "demo") {
+    if (name !== DEMO_REPO) {
+      return { ok: false, error: "Quick Demo Mode uses the bundled app." };
+    }
+  } else {
+    try {
+      const match = (await listRepos(session)).find((r) => r.name === name);
+      if (!match) {
+        return {
+          ok: false,
+          error:
+            "Rox can no longer see that repository. Choose another, or add it on GitHub.",
+        };
+      }
+      installationId = match.installationId;
+    } catch {
+      return { ok: false, error: "GitHub did not answer. Try again." };
+    }
+  }
+
+  try {
+    await db().query(
+      `INSERT INTO user_setup (user_id, repo, repo_installation_id)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_id) DO UPDATE
+         SET repo = EXCLUDED.repo,
+             repo_installation_id = EXCLUDED.repo_installation_id,
+             updated_at = now()`,
+      [session.uid, name, installationId],
+    );
+  } catch {
+    return NOT_SAVED;
+  }
+  await audit(session.uid, "setup.repo", { repo: name });
+  refresh();
+  return { ok: true };
+}
+
+export async function saveModels(
+  orchestrator: string,
+  subagent: string,
+): Promise<Result> {
+  const session = await getSession();
+  if (!session) return SIGNED_OUT;
+
+  const model = findModel(orchestrator);
+  if (!model) return { ok: false, error: "Choose an orchestrator model." };
+  const sub = findModel(subagent);
+  if (!sub) return { ok: false, error: "Choose a sub agent model." };
+
+  try {
+    await db().query(
+      `INSERT INTO user_setup (user_id, orchestrator_model, subagent_model)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_id) DO UPDATE
+         SET orchestrator_model = EXCLUDED.orchestrator_model,
+             subagent_model = EXCLUDED.subagent_model,
+             updated_at = now()`,
+      [session.uid, model.id, sub.id],
+    );
+  } catch {
+    return NOT_SAVED;
+  }
+  await audit(session.uid, "setup.models", {
+    orchestrator: model.id,
+    subagent: sub.id,
+  });
+  refresh();
+  return { ok: true };
+}
+
+/** Checks the key with its provider, then stores it encrypted. */
+export async function saveProviderKey(
+  provider: string,
+  rawKey: string,
+): Promise<Result<{ key: SavedKey }>> {
+  const session = await getSession();
+  if (!session) return SIGNED_OUT;
+  if (!Object.hasOwn(PROVIDERS, provider)) {
+    return { ok: false, error: "Unknown provider." };
+  }
+
+  const id = provider as Provider;
+  const { name } = PROVIDERS[id];
+  const key = String(rawKey).trim();
+  if (!/^[\x21-\x7e]{20,300}$/.test(key)) {
+    return {
+      ok: false,
+      error: `That does not look like an API key from ${name}.`,
+    };
+  }
+
+  const check = await checkProviderKey(id, key);
+  if (!check.ok) {
+    return {
+      ok: false,
+      error:
+        check.reason === "rejected"
+          ? `${name} rejected this key. Check it and paste it again.`
+          : `${name} did not answer, so the key was not saved. Try again.`,
+    };
+  }
+
+  const saved: SavedKey = { last4: key.slice(-4), models: check.models };
+  try {
+    const { iv, ciphertext, tag } = encryptSecret(key, `${session.uid}:${id}`);
+    const client = await db().connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "DELETE FROM provider_keys WHERE user_id = $1 AND provider = $2",
+        [session.uid, id],
+      );
+      await client.query(
+        `INSERT INTO provider_keys
+           (user_id, provider, iv, ciphertext, tag, last4, models)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [session.uid, id, iv, ciphertext, tag, saved.last4, saved.models],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    // Never log the key; the message comes from Postgres or the vault.
+    console.error("saving a provider key failed:", (error as Error).message);
+    return { ok: false, error: "The key is valid but could not be saved." };
+  }
+  await audit(session.uid, "setup.key_saved", { provider: id });
+  refresh();
+  return { ok: true, key: saved };
+}
+
+export async function removeProviderKey(provider: string): Promise<Result> {
+  const session = await getSession();
+  if (!session) return SIGNED_OUT;
+  try {
+    await db().query(
+      "DELETE FROM provider_keys WHERE user_id = $1 AND provider = $2",
+      [session.uid, String(provider)],
+    );
+  } catch {
+    return NOT_SAVED;
+  }
+  await audit(session.uid, "setup.key_removed", { provider: String(provider) });
+  refresh();
+  return { ok: true };
+}
+
+/** Asks the Docker engine for its version. Saved only if it answers. */
+export async function checkDocker(): Promise<Result<{ version: string }>> {
+  const session = await getSession();
+  if (!session) return SIGNED_OUT;
+
+  let version: string;
+  try {
+    const { stdout } = await run(
+      "docker",
+      ["version", "--format", "{{.Server.Version}}"],
+      { timeout: 8000, windowsHide: true },
+    );
+    version = stdout.trim();
+    if (!version) throw new Error("no version");
+  } catch {
+    return {
+      ok: false,
+      error: "Docker is not answering. Start Docker Desktop, then check again.",
+    };
+  }
+
+  try {
+    await db().query(
+      `INSERT INTO user_setup (user_id, sandbox, sandbox_checked_at)
+       VALUES ($1, 'docker', now())
+       ON CONFLICT (user_id) DO UPDATE
+         SET sandbox = 'docker', sandbox_checked_at = now(), updated_at = now()`,
+      [session.uid],
+    );
+  } catch {
+    return NOT_SAVED;
+  }
+  await audit(session.uid, "setup.sandbox", { sandbox: "docker", version });
+  refresh();
+  return { ok: true, version };
+}

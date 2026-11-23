@@ -1,7 +1,10 @@
 import { redirect } from "next/navigation";
-import { SetupGuide, TestModePanel } from "@/components/home-guide";
+import { Recommended } from "@/components/setup/recommended";
+import { SetupGuide } from "@/components/setup/setup-guide";
+import { TestMode } from "@/components/setup/test-mode";
 import { WelcomeToast } from "@/components/welcome-toast";
 import { getSession } from "@/lib/session";
+import { getSetup } from "@/lib/setup";
 
 export default async function HomePage({
   searchParams,
@@ -15,28 +18,22 @@ export default async function HomePage({
   // Quick Judge Mode users are all called "User".
   const displayName = isJudge ? "User" : (session.name ?? session.login);
   const justSignedIn = (await searchParams).welcome === "1";
+  const setup = await getSetup(session.uid).catch(() => null);
 
   return (
-    <div className="mx-auto w-full max-w-4xl pb-16">
+    <div className="mx-auto w-full max-w-[720px] pb-16">
       {justSignedIn && <WelcomeToast name={displayName} />}
-
-      <h1 className="font-serif text-3xl font-semibold tracking-tight text-ink">
-        {isJudge ? "Welcome to the Rox demo" : `Welcome, ${displayName}`}
-      </h1>
-      <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-ink-soft">
-        {isJudge
-          ? "See Rox investigate, fix and verify a bug without connecting anything. Everything that would normally need your accounts is shown in test mode."
-          : "Rox is your on-call engineer. Finish the steps below and incidents will be investigated, fixed and verified for you to merge."}
-      </p>
-
-      <div className="mt-8">
-        <SetupGuide
-          isJudge={isJudge}
-          installations={session.installations.length}
-        />
-      </div>
-
-      {isJudge && <TestModePanel />}
+      {setup ? (
+        <>
+          <SetupGuide initial={setup} isJudge={isJudge} login={session.login} />
+          <Recommended isJudge={isJudge} />
+          {isJudge && <TestMode />}
+        </>
+      ) : (
+        <p className="text-[15px] text-ink-soft">
+          Rox could not reach its database. Start it, then reload this page.
+        </p>
+      )}
     </div>
   );
 }

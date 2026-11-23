@@ -193,7 +193,7 @@ body {
   }
 }
 
-/* ---------- Toast ---------- */
+/* ---------- Toast (app controls live in app.css) ---------- */
 .toast {
   animation: toast-in 0.3s ease-out both;
 }

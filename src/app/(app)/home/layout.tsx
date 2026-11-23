@@ -1,6 +1,8 @@
+import "../../app.css";
 import { redirect } from "next/navigation";
 import { AppShell, type ShellUser } from "@/components/app-shell";
 import { getSession } from "@/lib/session";
+import { getSetup } from "@/lib/setup";
 
 // Wraps every page under /home with the sidebar and header. proxy.ts already
 // blocks signed-out visitors; this checks again so the page never renders for
@@ -18,8 +20,11 @@ export default async function HomeLayout({ children }: LayoutProps<"/home">) {
     isJudge,
   };
 
+  // The shell still renders if the database is down; the page says so.
+  const setup = await getSetup(session.uid).catch(() => null);
+
   return (
-    <AppShell user={user} title="Home">
+    <AppShell user={user} repo={setup?.repo ?? null} title="Home">
       {children}
     </AppShell>
   );

@@ -166,12 +166,28 @@ try {
       /users_identity/,
     ),
   );
-  await check("only one demo user", () =>
-    expectError(
-      app.query("INSERT INTO users (login, is_demo) VALUES ('judge2', true)"),
-      /users_one_demo/,
-    ),
-  );
+  await check("every judge visit can have its own demo user", async () => {
+    await app.query(
+      "INSERT INTO users (login, is_demo) VALUES ('judge2', true)",
+    );
+  });
+  await check("service role cannot read stored API keys", async () => {
+    const { rows } = await app.query("SELECT id FROM users LIMIT 1");
+    await app.query(
+      `INSERT INTO provider_keys (user_id, provider, iv, ciphertext, tag, last4)
+       VALUES ($1, 'openai', decode('00','hex'), decode('00','hex'), decode('00','hex'), 'test')`,
+      [rows[0].id],
+    );
+    await app.query("SELECT provider, last4 FROM provider_keys");
+    await expectError(
+      app.query("SELECT ciphertext FROM provider_keys"),
+      /permission denied/,
+    );
+    await expectError(
+      app.query("UPDATE provider_keys SET last4 = 'x'"),
+      /permission denied/,
+    );
+  });
   await check("GitHub user can be added", async () => {
     await app.query(
       "INSERT INTO users (github_id, login) VALUES (1, 'selftest')",
