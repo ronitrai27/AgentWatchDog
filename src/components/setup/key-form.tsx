@@ -58,7 +58,7 @@ export function KeyForm({
               data-1p-ignore
               data-lpignore="true"
               aria-invalid={error !== null}
-              className="field h-9 min-w-0 flex-1 px-2.5 text-[13px] placeholder:text-muted/70"
+              className="field h-9 min-w-0 flex-1 px-2.5 text-[13px] placeholder:text-ink-muted/70"
             />
             <button
               type="submit"

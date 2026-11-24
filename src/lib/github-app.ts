@@ -76,6 +76,11 @@ export type Repo = {
   default_branch: string;
 };
 
+/** The App itself. Answers only when the App id and private key belong together. */
+export function getApp(): Promise<{ slug: string }> {
+  return gh<{ slug: string }>("/app", { token: appJwt() });
+}
+
 export function getInstallation(id: number): Promise<Installation> {
   return gh<Installation>(`/app/installations/${id}`, { token: appJwt() });
 }

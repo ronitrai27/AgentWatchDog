@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/agent/node_modules
 /.pnp
 .pnp.*
 .yarn/*
@@ -46,3 +47,6 @@ next-env.d.ts
 
 # Database backups (contain real data)
 /backups/
+
+# local Temporal dev server data
+/.temporal/

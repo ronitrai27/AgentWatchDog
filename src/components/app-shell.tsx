@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { type ReactNode, useId, useState } from "react";
+import { ChatHistory } from "./chat-history";
 import { Brand } from "./setup/brand";
 import { UserAvatar } from "./user-avatar";
 
@@ -67,11 +68,11 @@ function ConnectedRepo({ repo }: { repo: string | null }) {
   return (
     <div
       data-connected={repo !== null}
-      className={`repo-box flex items-center gap-3 px-3 py-3 ${repo ? "text-white" : "text-ink"}`}
+      className={`bg-neutral-100 border rounded flex items-center gap-3 px-3 py-3 ${repo ? "text-green-800" : "text-ink"}`}
     >
       <Brand id="github" size={30} />
       <div className="min-w-0">
-        <p className={`text-xs ${repo ? "text-white/75" : "text-ink-soft"}`}>
+        <p className={`text-xs ${repo ? "text-black" : "text-black"}`}>
           Repo connected
         </p>
         <p
@@ -97,12 +98,6 @@ const NAV: Item[] = [
     label: "Runs",
     href: "/home/runs",
     icon: glyph("M3 12h4l3-8 4 16 3-8h4"),
-    soon: true,
-  },
-  {
-    label: "Approvals",
-    href: "/home/approvals",
-    icon: glyph("M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM8 12l3 3 5-6"),
     soon: true,
   },
   {
@@ -176,7 +171,7 @@ function Sidebar({
               <span
                 key={item.label}
                 aria-disabled="true"
-                className="flex h-8 cursor-not-allowed items-center gap-2.5 rounded-md px-2 text-[13px] text-muted"
+                className="flex h-8 cursor-not-allowed items-center gap-2.5 rounded-md px-2 text-[13px] text-ink-muted"
               >
                 {item.icon}
                 {item.label}
@@ -187,13 +182,15 @@ function Sidebar({
             ),
           )}
         </nav>
+
+        <ChatHistory onNavigate={onNavigate} />
       </div>
 
       <nav aria-label="Account" className="p-2">
         <NavLink item={SETTINGS} onNavigate={onNavigate} />
       </nav>
 
-      <div className="flex items-center gap-2.5 border-t border-ink/30 bg-olive-300 px-4 py-3">
+      <div className="flex items-center gap-2.5 border-t border-ink/30 bg-neutral-100 px-4 py-3">
         <UserAvatar src={user.avatar} name={user.name} size={32} />
         <div className="min-w-0">
           <p className="truncate text-[13px] font-medium text-ink">
@@ -241,9 +238,9 @@ export function AppShell({
     [...NAV, SETTINGS].find((item) => item.href === pathname)?.label ?? "Home";
 
   return (
-    <div className="min-h-svh bg-paper md:flex">
+    <div className="min-h-svh bg-paper [--paper:#f8f9f6] md:flex">
       {/* Desktop sidebar */}
-      <aside className="sticky top-0 hidden h-svh w-60 shrink-0 border-r border-ink/10 bg-mist-100 md:block">
+      <aside className="sticky top-0 hidden h-svh w-60 shrink-0 border-r border-ink/10 bg-white md:block">
         <Sidebar user={user} repo={repo} />
       </aside>
 
@@ -267,7 +264,7 @@ export function AppShell({
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-ink/10 bg-mist-100 px-4 backdrop-blur sm:px-5">
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-ink/10 bg-white px-4 backdrop-blur sm:px-5">
           <div className="flex items-center gap-2.5">
             <button
               type="button"

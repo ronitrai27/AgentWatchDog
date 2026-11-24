@@ -37,6 +37,36 @@ export type ModelId = (typeof MODELS)[number]["id"];
 export const findModel = (id: string | null | undefined) =>
   MODELS.find((model) => model.id === id);
 
+/**
+ * US dollars per million tokens, list prices read 2026-11-25, used for the budget caps. Where
+ * sources differ the higher one is used, so a cap stops early rather than late.
+ */
+const PRICES: Partial<Record<ModelId, { input: number; output: number }>> = {
+  "gpt-6-sol": { input: 2, output: 10 },
+  "gpt-6-luna": { input: 0.1, output: 0.5 },
+  "gpt-5.4-mini": { input: 0.75, output: 4.5 },
+  "claude-opus-5-5": { input: 4, output: 20 },
+  "claude-sonnet-5-5": { input: 2, output: 10 },
+  // The rate above 100,000 tokens; shorter prompts cost less.
+  "claude-haiku-5-5": { input: 0.5, output: 2.5 },
+  "gemini-3.8-flash": { input: 1.5, output: 7.5 },
+};
+
+/** A model without a known price (gemini-4-hydrogen, or any new one) counts as expensive. */
+const UNKNOWN_PRICE = { input: 5, output: 25 };
+
+export const priceOf = (modelId: string) =>
+  PRICES[modelId as ModelId] ?? UNKNOWN_PRICE;
+
+export function costUsd(
+  modelId: string,
+  inputTokens: number,
+  outputTokens: number,
+): number {
+  const price = priceOf(modelId);
+  return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
+}
+
 /** Which providers a set of choices needs a key for. */
 export function providersFor(
   orchestrator: ModelId | null,

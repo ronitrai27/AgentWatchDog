@@ -18,7 +18,7 @@ export function Recommended({ isJudge }: { isJudge: boolean }) {
       <h2 id="recommended-title" className="text-[15px] font-medium text-ink">
         Recommended connections
       </h2>
-      <p className="mt-1 text-[13px] text-muted">
+      <p className="mt-1 text-[13px] text-ink-muted">
         {isJudge
           ? "Optional. In Quick Demo Mode these run in test mode, with nothing to connect."
           : "Optional. Where Rox hears about problems and where it reports."}
@@ -32,9 +32,9 @@ export function Recommended({ isJudge }: { isJudge: boolean }) {
             <Brand id={item.id} size={22} />
             <span className="min-w-0 flex-1 text-[13px]">
               <span className="block font-medium text-ink">{item.name}</span>
-              <span className="block truncate text-muted">{item.body}</span>
+              <span className="block truncate text-ink-muted">{item.body}</span>
             </span>
-            <span className="text-[13px] text-muted">
+            <span className="text-[13px] text-ink-muted">
               {isJudge ? "Test mode" : "Soon"}
             </span>
           </li>

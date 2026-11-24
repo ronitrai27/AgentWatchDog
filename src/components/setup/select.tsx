@@ -177,13 +177,13 @@ export function Select({
       >
         {selected?.icon}
         <span
-          className={`min-w-0 flex-1 truncate ${selected ? "text-ink" : "text-muted"}`}
+          className={`min-w-0 flex-1 truncate ${selected ? "text-ink" : "text-ink-muted"}`}
         >
           {selected?.label ?? placeholder}
         </span>
         <svg
           viewBox="0 0 16 16"
-          className={`size-3.5 shrink-0 text-muted transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+          className={`size-3.5 shrink-0 text-ink-muted transition-transform duration-200 ${open ? "rotate-180" : ""}`}
           fill="none"
           stroke="currentColor"
           strokeWidth="1.5"
@@ -235,7 +235,7 @@ export function Select({
             aria-activedescendant={`${id}-${active}`}
             autoComplete="off"
             spellCheck={false}
-            className="h-9 w-full shrink-0 border-b border-ink/10 bg-transparent px-3 text-[13px] text-ink outline-none placeholder:text-muted"
+            className="h-9 w-full shrink-0 border-b border-ink/10 bg-transparent px-3 text-[13px] text-ink outline-none placeholder:text-ink-muted"
           />
         )}
         <div
@@ -251,7 +251,7 @@ export function Select({
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1 outline-none"
         >
           {shown.length === 0 && (
-            <p className="px-2 py-2 text-[13px] text-muted">
+            <p className="px-2 py-2 text-[13px] text-ink-muted">
               {query ? `No match for "${query}".` : emptyText}
             </p>
           )}
@@ -259,7 +259,7 @@ export function Select({
             <div key={option.value}>
               {option.group && option.group !== shown[index - 1]?.group && (
                 <p
-                  className={`px-2 pb-1 text-xs text-muted ${index > 0 ? "mt-1 border-t border-ink/8 pt-2" : "pt-1"}`}
+                  className={`px-2 pb-1 text-xs text-ink-muted ${index > 0 ? "mt-1 border-t border-ink/8 pt-2" : "pt-1"}`}
                 >
                   {option.group}
                 </p>
@@ -276,14 +276,14 @@ export function Select({
                 onPointerMove={() => !option.disabled && setActive(index)}
                 className={`flex h-8 items-center gap-2 rounded px-2 text-[13px] ${
                   option.disabled
-                    ? "cursor-not-allowed text-muted opacity-60"
+                    ? "cursor-not-allowed text-ink-muted opacity-60"
                     : "cursor-default text-ink"
                 } ${index === active && !option.disabled ? "bg-ink/7" : ""}`}
               >
                 {option.icon}
                 <span className="min-w-0 flex-1 truncate">{option.label}</span>
                 {option.hint && (
-                  <span className="shrink-0 text-xs text-muted">
+                  <span className="shrink-0 text-xs text-ink-muted">
                     {option.hint}
                   </span>
                 )}

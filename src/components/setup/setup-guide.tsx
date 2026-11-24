@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { RoxChat } from "@/components/home/rox-chat";
+import { RoxHome } from "@/components/home/rox-home";
 import {
   findModel,
   isSetUp,
@@ -80,12 +80,12 @@ function Step({
     <>
       {icon && <Brand id={icon} size={28} />}
       <span
-        className={`shrink-0 text-[15px] font-medium ${locked ? "text-muted" : "text-ink"}`}
+        className={`shrink-0 text-[15px] font-medium ${locked ? "text-ink-muted" : "text-ink"}`}
       >
         {title}
       </span>
       <span
-        className={`ml-auto flex min-w-0 items-center gap-2 text-[13px] text-muted transition-opacity duration-200 ${open ? "opacity-0" : ""}`}
+        className={`ml-auto flex min-w-0 items-center gap-2 text-[13px] text-ink-muted transition-opacity duration-200 ${open ? "opacity-0" : ""}`}
       >
         {done && summary}
       </span>
@@ -185,12 +185,14 @@ export function SetupGuide({
   initial,
   isJudge,
   login,
+  name,
   reopenAt,
   extras,
 }: {
   initial: SetupState;
   isJudge: boolean;
   login: string;
+  name: string;
   /** Set when a finished guide was asked for: a step to open, or "open". */
   reopenAt?: string;
   /** Shown below the guide, and only while the guide is open. */
@@ -247,10 +249,10 @@ export function SetupGuide({
     };
   };
 
-  if (!shown) return <RoxChat setup={state} isJudge={isJudge} />;
+  if (!shown) return <RoxHome setup={state} name={name} />;
 
   return (
-    <>
+    <div className="mx-auto max-w-[720px]">
       <section aria-labelledby="setup-title">
         <h2
           id="setup-title"
@@ -260,7 +262,7 @@ export function SetupGuide({
         </h2>
         <p className="mt-2 text-[15px] leading-relaxed text-ink-soft">
           {finished
-            ? `Everything Rox needs for ${state.repo} is in place. The agent service is not running yet, so nothing is being watched.`
+            ? `Everything Rox needs for ${state.repo} is in place.`
             : isJudge
               ? "Four short steps on the bundled demo app. No accounts and no keys."
               : "Four steps, then Rox has what it needs to work on your repository."}
@@ -330,6 +332,6 @@ export function SetupGuide({
         </div>
       </section>
       {extras}
-    </>
+    </div>
   );
 }

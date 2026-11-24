@@ -1,33 +1,47 @@
 {
   "version": 2,
   "skills": {
+    "langchain-agent-experiments": {
+      "source": "langchain-ai/langchain-skills",
+      "commit": "ab84b0b5a3164ee17eb78b0828e58c48186f54ce",
+      "sourceType": "github",
+      "skillPath": "skills/langchain-agent-experiments/SKILL.md",
+      "computedHash": "96fffa04749e7c49c000ef33be5ad7732b7c7c63bef8652f8b13ac6e688f423c"
+    },
     "langchain-agent-monitoring": {
       "source": "langchain-ai/langchain-skills",
+      "commit": "ab84b0b5a3164ee17eb78b0828e58c48186f54ce",
       "sourceType": "github",
       "skillPath": "skills/langchain-agent-monitoring/SKILL.md",
-      "computedHash": "388520ea49a649fffb28e11ad18f5566acbbc49c929b794fd9588e1f0b9dd30b",
-      "installMode": "copy"
+      "computedHash": "299feda7ddf54ae7e03d973614470b110939d9d0b90dbf6fec428e2ec5f179e1"
     },
     "langchain-agent-tracing": {
       "source": "langchain-ai/langchain-skills",
+      "commit": "ab84b0b5a3164ee17eb78b0828e58c48186f54ce",
       "sourceType": "github",
       "skillPath": "skills/langchain-agent-tracing/SKILL.md",
-      "computedHash": "358bc61029933171d6c8844a2b5a3873bbac5d4b2a2e2bd8f4ffeabb66ddd703",
-      "installMode": "copy"
+      "computedHash": "755dbdceeda535f453d5f919ae67a0d0db8b7ffbe1079222cf0ee1270f766a6f"
     },
     "langchain-build-agent": {
       "source": "langchain-ai/langchain-skills",
+      "commit": "ab84b0b5a3164ee17eb78b0828e58c48186f54ce",
       "sourceType": "github",
       "skillPath": "skills/langchain-build-agent/SKILL.md",
-      "computedHash": "7632682b9610a2f51285554b5c0477d621ddafa5e7780ea7177b9ae17380ec6b",
-      "installMode": "copy"
+      "computedHash": "f61047ed2866022d3b816a93498b15280854b5ab4e6dd199eae902e18598440d"
     },
     "langchain-eval-engineering": {
       "source": "langchain-ai/langchain-skills",
+      "commit": "ab84b0b5a3164ee17eb78b0828e58c48186f54ce",
       "sourceType": "github",
       "skillPath": "skills/langchain-eval-engineering/SKILL.md",
-      "computedHash": "04520c46216489586faf3f8cc48fee8097fb8187edda69bca600363de493f373",
-      "installMode": "copy"
+      "computedHash": "a965ebbb4195275e89c130d9eff6fb1ae871f98d4f0bd3ba84a10be4cb75c05b"
+    },
+    "langchain-managed-deep-agents": {
+      "source": "langchain-ai/langchain-skills",
+      "commit": "ab84b0b5a3164ee17eb78b0828e58c48186f54ce",
+      "sourceType": "github",
+      "skillPath": "skills/langchain-managed-deep-agents/SKILL.md",
+      "computedHash": "38d5a86afe7ddb67012b38ae5da8c81b5153785cf556122364dc130010a1ba9b"
     }
   }
 }

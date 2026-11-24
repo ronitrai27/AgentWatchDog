@@ -47,7 +47,7 @@ function Row({
     <div className="grid items-center gap-x-6 gap-y-1.5 py-2 sm:grid-cols-[minmax(0,1fr)_256px]">
       <div>
         <p className="text-[13px] font-medium text-ink">{label}</p>
-        <p className="text-[13px] text-muted">{help}</p>
+        <p className="text-[13px] text-ink-muted">{help}</p>
       </div>
       {children}
     </div>
@@ -79,7 +79,7 @@ function KeyRow({
           className="text-[13px] font-medium text-ink"
         >{`${name} API key`}</label>
         {!showField && (
-          <span className="ml-auto flex shrink-0 items-center gap-3 text-[13px] text-muted">
+          <span className="ml-auto flex shrink-0 items-center gap-3 text-[13px] text-ink-muted">
             <span className={saved ? "" : "hidden sm:inline"}>
               {saved ? `Ends in ${saved.last4}` : "Not needed"}
             </span>
@@ -171,7 +171,7 @@ export function ModelsStep({
                 onSaved={(key) => onKeys({ ...state.keys, [provider]: key })}
               />
             ))}
-            <p className="py-1 text-[13px] text-muted">
+            <p className="py-1 text-[13px] text-ink-muted">
               {isJudge
                 ? "Quick Demo Mode does not ask for a key."
                 : "Keys are checked with the provider, then stored encrypted."}
@@ -188,7 +188,7 @@ export function ModelsStep({
               {saving ? "Saving" : "Save models"}
             </button>
             {missing.length > 0 && (
-              <p className="text-[13px] text-muted">
+              <p className="text-[13px] text-ink-muted">
                 Add your {missing.map((p) => PROVIDERS[p].name).join(" and ")}{" "}
                 key to continue.
               </p>

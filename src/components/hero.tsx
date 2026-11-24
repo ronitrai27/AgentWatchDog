@@ -47,7 +47,7 @@ export function Hero() {
           className="mx-auto mt-14 w-full max-w-5xl scroll-mt-8 px-4 sm:px-6"
         >
           <RunPanel />
-          <p className="mt-3 text-center text-xs text-muted">
+          <p className="mt-3 text-center text-xs text-ink-muted">
             Simulated run for illustration. Numbers are sample data.
           </p>
         </div>

@@ -63,14 +63,14 @@ export function SandboxStep({ onSaved }: { onSaved: () => void }) {
             <Brand id={sandbox.id} size={28} />
             <span className="min-w-0 flex-1 text-[13px]">
               <span
-                className={`block font-medium ${sandbox.ready ? "text-ink" : "text-muted"}`}
+                className={`block font-medium ${sandbox.ready ? "text-ink" : "text-ink-muted"}`}
               >
                 {sandbox.name}
               </span>
-              <span className="block text-muted">{sandbox.body}</span>
+              <span className="block text-ink-muted">{sandbox.body}</span>
             </span>
             {!sandbox.ready && (
-              <span className="text-[13px] text-muted">Soon</span>
+              <span className="text-[13px] text-ink-muted">Soon</span>
             )}
             <input
               type="radio"

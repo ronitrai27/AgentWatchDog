@@ -2,12 +2,12 @@
 
 An autonomous first responder for production incidents. A production signal arrives, the agent investigates, reproduces the bug in a sandbox, writes and verifies a fix, opens a PR on its own branch, files a Linear issue and reports to Slack. Humans merge.
 
-Read [Architecture.md](Architecture.md) before changing anything in `agent/`. Status: design only; `agent/` is empty.
+Read [Architecture.md](Architecture.md) before changing anything in `agent/`. The agent is one LangGraph graph that runs inside the Next.js server.
 
 ## Layout
 
 - `src/` is the web UI (Next.js, App Router).
-- `agent/` is the agent service (TypeScript, LangGraph). It runs in Docker.
+- `agent/` is the agent (TypeScript, LangGraph). There is no second server: `src/instrumentation.ts` compiles the graph when Next.js starts and the `/api/chat` routes call `agent/src/rox.ts` directly.
 - `skills/` holds run-time runbooks the product loads. `.claude/skills/` holds skills for you, the coding agent. Do not mix them.
 - `fixtures/`, `trap-results/`, `demo-app/` support the demo and the hostile-input tests.
 
@@ -17,8 +17,9 @@ Read [Architecture.md](Architecture.md) before changing anything in `agent/`. St
 - `pnpm lint` runs Biome checks. `pnpm format` formats.
 - `pnpm build` builds the UI.
 - `pnpm db:up`, `pnpm db:migrate` and `pnpm db:selftest` start, migrate and check the database.
+- `pnpm temporal:dev` starts a local-only Temporal server (127.0.0.1, UI on http://127.0.0.1:8233, data in `.temporal/`). `pnpm temporal:worker` runs the hello-world worker and `pnpm temporal:hello` starts one workflow. Nothing in the agent uses Temporal yet.
 
-The agent service has no commands yet.
+- `pnpm agent:test` tests the agent. It starts with `pnpm dev`; restart it after changing `agent/`.
 
 ## Rules
 

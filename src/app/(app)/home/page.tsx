@@ -22,13 +22,14 @@ export default async function HomePage({
   const setup = await getSetup(session.uid).catch(() => null);
 
   return (
-    <div className="mx-auto w-full max-w-[720px] pb-16">
+    <div className="mx-auto w-full max-w-[1080px] pb-16">
       {justSignedIn && <WelcomeToast name={displayName} />}
       {setup ? (
         <SetupGuide
           initial={setup}
           isJudge={isJudge}
           login={session.login}
+          name={displayName}
           reopenAt={typeof params.setup === "string" ? params.setup : undefined}
           extras={
             <>

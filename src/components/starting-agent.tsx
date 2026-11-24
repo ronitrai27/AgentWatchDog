@@ -134,7 +134,7 @@ export function StartingAgent() {
                         ? "text-ink"
                         : broken
                           ? "text-[#9a352c]"
-                          : "text-muted"
+                          : "text-ink-muted"
                   }
                 >
                   {label}

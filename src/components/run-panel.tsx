@@ -253,7 +253,9 @@ export function RunPanel() {
           run_8f2c1 · TypeError in /api/cart/total
         </span>
         <span className="ml-auto flex items-center gap-3 text-xs">
-          <span className="hidden text-muted sm:inline">{elapsed} · $0.07</span>
+          <span className="hidden text-ink-muted sm:inline">
+            {elapsed} · $0.07
+          </span>
           <span
             className={`flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-medium ${
               done
@@ -294,7 +296,7 @@ export function RunPanel() {
               />
               <span
                 className={
-                  state === "todo" ? "text-muted" : "font-medium text-ink"
+                  state === "todo" ? "text-ink-muted" : "font-medium text-ink"
                 }
               >
                 <span className="sm:hidden">{i + 1}</span>
@@ -308,7 +310,7 @@ export function RunPanel() {
       <div className="grid lg:grid-cols-[1.35fr_1fr]">
         {/* Live trace */}
         <div className="border-b border-ink/15 lg:border-r lg:border-b-0">
-          <div className="flex items-center justify-between border-b border-ink/10 px-4 py-2 text-[10px] uppercase tracking-wider text-muted">
+          <div className="flex items-center justify-between border-b border-ink/10 px-4 py-2 text-[10px] uppercase tracking-wider text-ink-muted">
             <span>Live trace · append-only</span>
             <span>{shown.length} events</span>
           </div>
@@ -321,7 +323,7 @@ export function RunPanel() {
                 key={`${e.time}-${e.node}-${e.text}`}
                 className="grid grid-cols-[56px_1fr] gap-x-3 sm:grid-cols-[56px_84px_1fr]"
               >
-                <span className="text-muted">{e.time}</span>
+                <span className="text-ink-muted">{e.time}</span>
                 <span className="text-ink sm:order-none">{e.node}</span>
                 <span className="col-span-2 text-ink-soft sm:col-span-1">
                   <span
@@ -334,7 +336,7 @@ export function RunPanel() {
               </li>
             ))}
             {!done && (
-              <li className="text-muted">
+              <li className="text-ink-muted">
                 <span className="inline-block h-3 w-1.5 animate-pulse bg-ink/60 align-middle" />
               </li>
             )}
@@ -343,7 +345,7 @@ export function RunPanel() {
 
         {/* Verification matrix */}
         <div>
-          <div className="flex items-center justify-between border-b border-ink/10 px-4 py-2 text-[10px] uppercase tracking-wider text-muted">
+          <div className="flex items-center justify-between border-b border-ink/10 px-4 py-2 text-[10px] uppercase tracking-wider text-ink-muted">
             <span>Verification gates</span>
             <span>
               {resolved} / {TOTAL_CHECKS} passed
@@ -363,7 +365,7 @@ export function RunPanel() {
                         key={row.label}
                         className="flex items-center justify-between gap-2"
                       >
-                        <span className={ok ? "text-ink" : "text-muted"}>
+                        <span className={ok ? "text-ink" : "text-ink-muted"}>
                           {row.label}
                         </span>
                         {ok ? (
@@ -371,7 +373,7 @@ export function RunPanel() {
                             ✓ {row.value}
                           </span>
                         ) : (
-                          <span className="font-mono text-[10.5px] text-muted">
+                          <span className="font-mono text-[10.5px] text-ink-muted">
                             {count > 0 && count > row.at - 2
                               ? "running…"
                               : "···"}
@@ -389,11 +391,11 @@ export function RunPanel() {
 
       {/* Outputs bar */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-ink/15 bg-ink/4 px-4 py-2.5 text-xs">
-        <span className="text-muted">Outputs</span>
+        <span className="text-ink-muted">Outputs</span>
         <Output on={count > 14} label="PR awd/fix-cart-total (draft)" />
         <Output on={count > 15} label="Linear RX-142" />
         <Output on={count > 15} label="Slack #incidents" />
-        <span className="ml-auto text-muted">
+        <span className="ml-auto text-ink-muted">
           Merge, deploy and push to main: no tool exists
         </span>
       </div>
@@ -403,7 +405,7 @@ export function RunPanel() {
 
 function Output({ on, label }: { on: boolean; label: string }) {
   return (
-    <span className={on ? "text-ink" : "text-muted/60"}>
+    <span className={on ? "text-ink" : "text-ink-muted/60"}>
       <span className={on ? "text-[#2f7d4f]" : ""}>{on ? "●" : "○"}</span>{" "}
       {label}
     </span>

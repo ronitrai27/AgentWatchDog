@@ -3,6 +3,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { revalidatePath } from "next/cache";
+import { type AgentConfig, configProblem } from "@/lib/agent-config";
+import { writeAgentConfig } from "@/lib/agent-config-store";
 import { db } from "@/lib/db";
 import {
   DEMO_REPO,
@@ -259,4 +261,33 @@ export async function checkDocker(): Promise<Result<{ version: string }>> {
   await audit(session.uid, "setup.sandbox", { sandbox: "docker", version });
   refresh();
   return { ok: true, version };
+}
+
+/** The caps, tone, instructions and schedule under Settings. */
+export async function saveAgentConfig(input: AgentConfig): Promise<Result> {
+  const session = await getSession();
+  if (!session) return SIGNED_OUT;
+  if (!input || typeof input !== "object")
+    return { ok: false, error: "Nothing to save." };
+  const problem = configProblem(input);
+  if (problem) return { ok: false, error: problem };
+  const config: AgentConfig = {
+    dayBudgetUsd: Math.round(input.dayBudgetUsd * 100) / 100,
+    maxMinutes: input.maxMinutes,
+    tone: input.tone,
+    instructions: input.instructions.trim(),
+    schedule: input.schedule,
+  };
+  try {
+    await writeAgentConfig(session.uid, config);
+  } catch {
+    return NOT_SAVED;
+  }
+  const { instructions, ...logged } = config;
+  await audit(session.uid, "agent.config", {
+    ...logged,
+    instructionsLength: instructions.length,
+  });
+  refresh();
+  return { ok: true };
 }

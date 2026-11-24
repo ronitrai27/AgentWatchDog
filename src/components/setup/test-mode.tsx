@@ -37,13 +37,13 @@ export function TestMode() {
           <span className="hidden group-open:inline">Hide</span>
         </span>
       </summary>
-      <p className="mt-2 text-[13px] text-muted">
+      <p className="mt-2 text-[13px] text-ink-muted">
         How a run will work once the agent service is connected. Rox never asks
         a judge for credentials.
       </p>
       <div className="mt-3 overflow-x-auto">
         <table className="w-full min-w-[560px] text-left text-[13px]">
-          <thead className="text-muted">
+          <thead className="text-ink-muted">
             <tr className="border-b border-ink/12">
               <th className="py-2 pr-6 font-normal">Part of a run</th>
               <th className="py-2 pr-6 font-normal">Quick Demo Mode</th>

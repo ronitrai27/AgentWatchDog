@@ -77,3 +77,19 @@ Scanner versions pinned, rule databases baked into the image, so a run is reprod
 ================================================================================
 
 covers GitHub events only (failed checks, pushes, PR outcomes). Sentry, Vercel and Datadog alerts still need their own webhook URL pointed at Rox. In Judge Mode those alerts are simulated, so judges won’t need them.
+
+
+How it closes the loop
+
+signal → investigate → failing test → fix → verify in a clean sandbox → PR → Slack → you merge → watch production → close, or reopen if the error returns
+
+That last step is missing from our design. After the merge, Rox should confirm the Sentry error stopped. Without it, the loop ends at a PR and someone still has to watch.
+
+Engineers can walk away because:
+
+No failing test, no PR. The test must fail before the fix and pass after it.
+A different model checks the fix, and it can only reject.
+Code enforces the limits: no merge or push tool, protected files, cost limit, three attempts.
+It stops honestly and says why, with evidence.
+It stays quiet unless there is a PR, a question or a failure.
+Everything can be replayed, and one click kills a run.

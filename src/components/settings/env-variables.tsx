@@ -56,7 +56,7 @@ function Variable({
   }
 
   return (
-    <li className="px-3.5 py-3">
+    <li className="py-5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2.5">
         <Brand id={provider} size={24} />
         <div className="min-w-0 flex-1 text-[13px]">
@@ -66,7 +66,7 @@ function Variable({
           >
             {envName}
           </label>
-          <p className="text-muted">
+          <p className="text-ink-muted">
             <span className="font-mono">
               <span aria-hidden="true">••••••••</span>
               <span className="sr-only">Ends in </span>
@@ -168,17 +168,9 @@ export function EnvVariables({ setup }: { setup: SetupState }) {
     );
 
   return (
-    <section aria-labelledby="env-title" className="mt-10">
-      <h3 id="env-title" className="text-[15px] font-medium text-ink">
-        Environment variables
-      </h3>
-      <p className="mt-1 text-[13px] leading-relaxed text-ink-soft">
-        Stored encrypted. Rox shows only the last four characters, so a key
-        cannot be copied back out.
-      </p>
-
+    <section aria-label="API keys">
       {saved.length > 0 ? (
-        <ul className="mt-4 divide-y divide-ink/10 rounded-lg border border-ink/15 bg-white">
+        <ul className="divide-y divide-ink/10 border-b border-ink/10">
           {saved.map(({ provider, key }) => (
             <Variable
               key={provider}
@@ -190,7 +182,7 @@ export function EnvVariables({ setup }: { setup: SetupState }) {
           ))}
         </ul>
       ) : (
-        <p className="mt-4 rounded-lg border border-dashed border-ink/20 px-3.5 py-5 text-[13px] text-ink-soft">
+        <p className="py-6 text-[13px] text-ink-soft">
           No saved variables. Add a model key on{" "}
           <Link
             href="/home"
