@@ -25,18 +25,18 @@ export default async function HomePage({
     <div className="mx-auto w-full max-w-[720px] pb-16">
       {justSignedIn && <WelcomeToast name={displayName} />}
       {setup ? (
-        <>
-          <SetupGuide
-            initial={setup}
-            isJudge={isJudge}
-            login={session.login}
-            reopenAt={
-              typeof params.setup === "string" ? params.setup : undefined
-            }
-          />
-          <Recommended isJudge={isJudge} />
-          {isJudge && <TestMode />}
-        </>
+        <SetupGuide
+          initial={setup}
+          isJudge={isJudge}
+          login={session.login}
+          reopenAt={typeof params.setup === "string" ? params.setup : undefined}
+          extras={
+            <>
+              <Recommended isJudge={isJudge} />
+              {isJudge && <TestMode />}
+            </>
+          }
+        />
       ) : (
         <p className="text-[15px] text-ink-soft">
           Rox could not reach its database. Start it, then reload this page.

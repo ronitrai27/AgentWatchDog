@@ -1,5 +1,6 @@
-# Decision log
+<!-- # Decision log
 
+This is now just for test and no need to append anything....
 Every change to this repo that involves a choice gets an entry here, written in the same change as the code.
 
 ## How to add an entry
@@ -146,30 +147,4 @@ Files: src/proxy.ts, src/lib/session-token.ts, src/lib/session.ts, src/lib/users
 **Why:** Asking GitHub for the private email address needs an extra consent line, which works against the "short, honest permissions" promise in D-011. Two layers of protection mean a bug in one does not expose pages.
 **Consequence:** GitHub users with a private email see `@login` instead of an address. Old session cookies have no email and show the fallback until the next sign-in. The proxy cannot check that the user still exists in the database, only that the cookie is valid; a deleted user keeps access until the cookie expires (7 days).
 
-## D-017 Root is /auth, landing moved to /web, judge test-mode Home
-Date: 2026-11-21 | Status: Proposed
-Files: src/app/page.tsx, src/app/(web)/web/page.tsx, src/app/(auth)/auth/page.tsx, src/app/(app)/home/{layout,page}.tsx, src/app/api/auth/logout/route.ts, src/components/{app-shell,home-guide}.tsx, Architecture.md §9, §9.2
-
-**Your decision:** The root should be `/auth` and the landing page should move to `/web`. Add a loud note at the bottom left of `/auth`: quick demo with no or low setup, use Quick Judge Mode; recommended for personal and real use, use GitHub, which only asks to verify who you are. In judge sessions, add a "Quick Demo Mode: On" button above Home in the sidebar and a "Try live in the real world" button in the header that logs out, goes to `/auth` and shows a toast recommending GitHub. Home should show a setup guide, and Quick Judge Mode should show third-party parts in test mode, never asking judges for their own credentials.
-**Agent's decision:** `/` redirects to `/auth`. The note is a bordered two-row callout with "Quick look" and "Recommended" labels. The badge expands to explain the mode. "Try live" posts `reason=real` to the logout route, which accepts only that exact value and redirects to `/auth?notice=github`. Home has a setup guide (real progress for GitHub users, a walkthrough for judges) and, for judges only, a table of what is real and what is test mode, marked "Design preview". Steps that need the agent service are marked "Coming next" instead of looking functional. Architecture §9.2 records the test-mode design.
-**Why:** Judges came to see the agent, and the hackathon rule is to use a test account or sandbox and never ask for their credentials. Labelling unbuilt steps honestly avoids a Home page that promises more than it does.
-**Consequence:** Nothing on Home can run an incident yet; that needs the agent service, sandbox, demo app and mock adapters. The test-mode table describes the plan. Landing visitors reach `/web` only by its address.
-
-## D-018 Real sessions get a fixed "Demo Mode: Off" badge and a "Try Quick Judge Mode" button
-Date: 2026-11-21 | Status: Proposed
-Files: src/components/app-shell.tsx, src/app/api/auth/logout/route.ts, src/app/(auth)/auth/page.tsx, Architecture.md §9.1
-
-**Your decision:** In real GitHub mode the sidebar badge stays constant as "Quick Demo Mode: Off", and the header button becomes "Try Quick Judge Mode", which logs out and shows a toast about logging in with Judge Mode.
-**Agent's decision:** The Off badge is a plain label, not a control. The header button posts `reason=judge` to the logout route, which allows exactly `real` or `judge` and redirects to `/auth?notice=github` or `/auth?notice=judge`; anything else goes to `/auth`. The toast reads "Log in with Quick Judge Mode to try the demo." Notices on `/auth` are now a lookup table, so an unknown `notice` value shows nothing. Rejected: switching modes without signing out, because a judge session and a GitHub session are different users with different data.
-**Why:** Signing out first keeps the two identities and their audit trails separate.
-**Consequence:** Switching modes means signing in again, so a GitHub user who tries Judge Mode must sign in with GitHub again to come back.
-
-## D-019 Four-step setup guide, encrypted model keys, coloured shell
-Date: 2026-11-24 | Status: Proposed
-Files: src/app/(app)/home/{page,layout,actions}.tsx, src/app/app.css, src/app/api/setup/repos/route.ts, src/components/app-shell.tsx, src/components/setup/**, src/lib/{models,setup,vault,provider-check}.ts, agent/migrations/{0004_setup,0005_one_subagent_model}.sql, scripts/db-selftest.mjs, .env.example, Architecture.md §9.1
-Replaces the guide from D-017 and the badge from D-018.
-
-**Your decision:** Use the frontend-design plugin. Remove the logo from the sidebar header and put the Quick Demo Mode button there; below it a dashed "Repo connected" box with the GitHub icon and a gradient. Four required steps: sign in with GitHub, choose a repository (dropdown), choose models (GPT-6 Luna, GPT-5.4 mini, GPT-6 Sol, Claude Haiku, Sonnet and Opus, Gemini 3.8 Flash, Gemini 4 Hydrogen) with logos and API keys, choose a sandbox (Docker now; Daytona and E2B shown). One model for the orchestrator and one for all sub agents. Recommended connections below. Coloured, bordered header buttons, white fields, the `github-dark` icon, progress bar, checkpoints and smooth motion, nothing that looks AI generated.
-**Agent's decision:** A checkpoint rail that fills as steps complete, instead of cards; green marks finished steps and main actions, red only Log out and errors. Keys are verified with the provider and stored so that the web role cannot read them back. "Claude Sonnet/Opus/Haiku" use the 5.5 ids. Docker must answer before step 4 completes. Daytona, E2B and the recommended connections say "Soon" rather than look clickable. Dropdowns use the browser popover layer, with no UI library. The app's styles moved to `app.css` because the Turbopack Tailwind loader kept serving an old `globals.css`. The database self-test's "only one demo user" check contradicted migration 0002 and was replaced.
-**Why:** Setup should prove things, not collect clicks: a key that works, a repository that is visible, an engine that answers.
-**Consequence:** Choices are saved but nothing uses them until the agent service exists; the finished guide says so. The sandbox step does not yet build the repository or run its tests. If styles ever look stale in development, restart `pnpm dev`.
+ -->

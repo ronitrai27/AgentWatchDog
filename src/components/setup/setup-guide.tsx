@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { RoxChat } from "@/components/home/rox-chat";
 import {
   findModel,
   isSetUp,
@@ -185,12 +186,15 @@ export function SetupGuide({
   isJudge,
   login,
   reopenAt,
+  extras,
 }: {
   initial: SetupState;
   isJudge: boolean;
   login: string;
   /** Set when a finished guide was asked for: a step to open, or "open". */
   reopenAt?: string;
+  /** Shown below the guide, and only while the guide is open. */
+  extras?: ReactNode;
 }) {
   const router = useRouter();
   const [state, setState] = useState(initial);
@@ -243,84 +247,89 @@ export function SetupGuide({
     };
   };
 
+  if (!shown) return <RoxChat setup={state} isJudge={isJudge} />;
+
   return (
-    <section aria-labelledby="setup-title">
-      <h2
-        id="setup-title"
-        className="font-serif text-[28px] font-semibold leading-tight tracking-tight text-ink"
-      >
-        {finished ? "Rox is set up" : "Set up Rox"}
-      </h2>
-      <p className="mt-2 text-[15px] leading-relaxed text-ink-soft">
-        {finished
-          ? `Everything Rox needs for ${state.repo} is in place. The agent service is not running yet, so nothing is being watched.`
-          : isJudge
-            ? "Four short steps on the bundled demo app. No accounts and no keys."
-            : "Four steps, then Rox has what it needs to work on your repository."}
-      </p>
+    <>
+      <section aria-labelledby="setup-title">
+        <h2
+          id="setup-title"
+          className="font-serif text-[28px] font-semibold leading-tight tracking-tight text-ink"
+        >
+          {finished ? "Rox is set up" : "Set up Rox"}
+        </h2>
+        <p className="mt-2 text-[15px] leading-relaxed text-ink-soft">
+          {finished
+            ? `Everything Rox needs for ${state.repo} is in place. The agent service is not running yet, so nothing is being watched.`
+            : isJudge
+              ? "Four short steps on the bundled demo app. No accounts and no keys."
+              : "Four steps, then Rox has what it needs to work on your repository."}
+        </p>
 
-      <div className="reveal" data-open={shown} inert={!shown}>
         <div>
-          <Progress done={ORDER.map((id) => progress[id])} />
+          <div>
+            <Progress done={ORDER.map((id) => progress[id])} />
 
-          <ol className="mt-10">
-            <Step
-              {...step("signIn")}
-              onToggle={undefined}
-              icon={isJudge ? undefined : "github"}
-              title={isJudge ? "Sign in" : "Sign in with GitHub"}
-              summary={
-                isJudge ? (
-                  "Demo user, no GitHub needed"
-                ) : (
-                  <span className="truncate text-ink">{login}</span>
-                )
-              }
-            />
-            <Step
-              {...step("repo")}
-              title="Choose a repository"
-              summary={
-                <>
-                  <Brand id="github" size={22} />
-                  <span className="truncate">{state.repo}</span>
-                </>
-              }
-            >
-              <RepoStep
-                current={state.repo}
-                isJudge={isJudge}
-                onSaved={(repo) => complete({ repo })}
+            <ol className="mt-10">
+              <Step
+                {...step("signIn")}
+                onToggle={undefined}
+                icon={isJudge ? undefined : "github"}
+                title={isJudge ? "Sign in" : "Sign in with GitHub"}
+                summary={
+                  isJudge ? (
+                    "Demo user, no GitHub needed"
+                  ) : (
+                    <span className="truncate text-ink">{login}</span>
+                  )
+                }
               />
-            </Step>
-            <Step
-              {...step("models")}
-              title="Choose models"
-              summary={<ModelsSummary state={state} />}
-            >
-              <ModelsStep
-                state={state}
-                isJudge={isJudge}
-                onKeys={(keys) => setState((now) => ({ ...now, keys }))}
-                onSaved={(choice) => complete(choice)}
-              />
-            </Step>
-            <Step
-              {...step("sandbox")}
-              last
-              title="Choose a sandbox"
-              summary={
-                <>
-                  <Brand id="docker" size={20} />
-                  Docker
-                </>
-              }
-            >
-              <SandboxStep onSaved={() => complete({ sandbox: "docker" })} />
-            </Step>
-          </ol>
+              <Step
+                {...step("repo")}
+                title="Choose a repository"
+                summary={
+                  <>
+                    <Brand id="github" size={22} />
+                    <span className="truncate">{state.repo}</span>
+                  </>
+                }
+              >
+                <RepoStep
+                  current={state.repo}
+                  isJudge={isJudge}
+                  onSaved={(repo) => complete({ repo })}
+                />
+              </Step>
+              <Step
+                {...step("models")}
+                title="Choose models"
+                summary={<ModelsSummary state={state} />}
+              >
+                <ModelsStep
+                  state={state}
+                  isJudge={isJudge}
+                  onKeys={(keys) => setState((now) => ({ ...now, keys }))}
+                  onSaved={(choice) => complete(choice)}
+                />
+              </Step>
+              <Step
+                {...step("sandbox")}
+                last
+                title="Choose a sandbox"
+                summary={
+                  <>
+                    <Brand id="docker" size={20} />
+                    Docker
+                  </>
+                }
+              >
+                <SandboxStep onSaved={() => complete({ sandbox: "docker" })} />
+              </Step>
+            </ol>
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
+      {extras}
+    </>
   );
 }
