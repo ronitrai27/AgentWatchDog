@@ -1,6 +1,7 @@
 import "../../app.css";
 import { redirect } from "next/navigation";
 import { AppShell, type ShellUser } from "@/components/app-shell";
+import { isSetUp } from "@/lib/models";
 import { getSession } from "@/lib/session";
 import { getSetup } from "@/lib/setup";
 
@@ -24,7 +25,11 @@ export default async function HomeLayout({ children }: LayoutProps<"/home">) {
   const setup = await getSetup(session.uid).catch(() => null);
 
   return (
-    <AppShell user={user} repo={setup?.repo ?? null} title="Home">
+    <AppShell
+      user={user}
+      repo={setup?.repo ?? null}
+      isSetUp={setup !== null && isSetUp(setup, isJudge)}
+    >
       {children}
     </AppShell>
   );

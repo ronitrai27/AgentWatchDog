@@ -2,9 +2,17 @@
 // providers' own API ids.
 
 export const PROVIDERS = {
-  openai: { name: "OpenAI", keyHint: "sk-..." },
-  anthropic: { name: "Anthropic", keyHint: "sk-ant-..." },
-  google: { name: "Google Gemini", keyHint: "Gemini API key" },
+  openai: { name: "OpenAI", envName: "OPENAI_API_KEY", keyHint: "sk-..." },
+  anthropic: {
+    name: "Anthropic",
+    envName: "ANTHROPIC_API_KEY",
+    keyHint: "sk-ant-...",
+  },
+  google: {
+    name: "Google Gemini",
+    envName: "GEMINI_API_KEY",
+    keyHint: "Gemini API key",
+  },
 } as const;
 
 export type Provider = keyof typeof PROVIDERS;
@@ -40,7 +48,12 @@ export function providersFor(
   return (Object.keys(PROVIDERS) as Provider[]).filter((p) => used.has(p));
 }
 
-export type SavedKey = { last4: string; models: string[] };
+export type SavedKey = {
+  last4: string;
+  models: string[];
+  /** When the provider accepted it, as an ISO date. */
+  savedAt: string;
+};
 
 export type SetupState = {
   repo: string | null;
@@ -67,6 +80,9 @@ export function setupProgress(state: SetupState, isJudge: boolean) {
     sandbox: state.sandbox !== null,
   };
 }
+
+export const isSetUp = (state: SetupState, isJudge: boolean) =>
+  Object.values(setupProgress(state, isJudge)).every(Boolean);
 
 /** The bundled app that Quick Judge Mode works on. */
 export const DEMO_REPO = "demo-app";

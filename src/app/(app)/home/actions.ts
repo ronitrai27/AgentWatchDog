@@ -151,7 +151,11 @@ export async function saveProviderKey(
     };
   }
 
-  const saved: SavedKey = { last4: key.slice(-4), models: check.models };
+  const saved: SavedKey = {
+    last4: key.slice(-4),
+    models: check.models,
+    savedAt: new Date().toISOString(),
+  };
   try {
     const { iv, ciphertext, tag } = encryptSecret(key, `${session.uid}:${id}`);
     const client = await db().connect();
@@ -163,9 +167,18 @@ export async function saveProviderKey(
       );
       await client.query(
         `INSERT INTO provider_keys
-           (user_id, provider, iv, ciphertext, tag, last4, models)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [session.uid, id, iv, ciphertext, tag, saved.last4, saved.models],
+           (user_id, provider, iv, ciphertext, tag, last4, models, verified_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          session.uid,
+          id,
+          iv,
+          ciphertext,
+          tag,
+          saved.last4,
+          saved.models,
+          saved.savedAt,
+        ],
       );
       await client.query("COMMIT");
     } catch (error) {
@@ -187,15 +200,26 @@ export async function saveProviderKey(
 export async function removeProviderKey(provider: string): Promise<Result> {
   const session = await getSession();
   if (!session) return SIGNED_OUT;
-  try {
-    await db().query(
-      "DELETE FROM provider_keys WHERE user_id = $1 AND provider = $2",
-      [session.uid, String(provider)],
-    );
-  } catch {
-    return NOT_SAVED;
+  if (!Object.hasOwn(PROVIDERS, provider)) {
+    return { ok: false, error: "Unknown provider." };
   }
-  await audit(session.uid, "setup.key_removed", { provider: String(provider) });
+
+  let removed: number | null;
+  try {
+    const result = await db().query(
+      "DELETE FROM provider_keys WHERE user_id = $1 AND provider = $2",
+      [session.uid, provider],
+    );
+    removed = result.rowCount;
+  } catch {
+    return {
+      ok: false,
+      error:
+        "Rox could not reach its database, so the key was not deleted. Try again.",
+    };
+  }
+  // Already gone, for example from another tab: nothing to record.
+  if (removed) await audit(session.uid, "setup.key_removed", { provider });
   refresh();
   return { ok: true };
 }

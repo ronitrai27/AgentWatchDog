@@ -1,7 +1,7 @@
 "use client";
 
-import { type FormEvent, useId, useState, useTransition } from "react";
-import { saveModels, saveProviderKey } from "@/app/(app)/home/actions";
+import { useId, useState, useTransition } from "react";
+import { saveModels } from "@/app/(app)/home/actions";
 import {
   findModel,
   MODELS,
@@ -13,6 +13,7 @@ import {
   type SetupState,
 } from "@/lib/models";
 import { Brand } from "./brand";
+import { KeyForm } from "./key-form";
 import { type Option, Select } from "./select";
 import { StepError } from "./step-error";
 
@@ -66,23 +67,8 @@ function KeyRow({
 }) {
   const id = useId();
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [checking, startChecking] = useTransition();
-  const { name, keyHint } = PROVIDERS[provider];
+  const { name } = PROVIDERS[provider];
   const showField = editing || (!saved && !optional);
-
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    setError(null);
-    startChecking(async () => {
-      const result = await saveProviderKey(provider, value);
-      if (!result.ok) return setError(result.error);
-      setValue("");
-      setEditing(false);
-      onSaved(result.key);
-    });
-  }
 
   return (
     <div className="py-2">
@@ -93,8 +79,10 @@ function KeyRow({
           className="text-[13px] font-medium text-ink"
         >{`${name} API key`}</label>
         {!showField && (
-          <span className="ml-auto flex items-center gap-3 text-[13px] text-muted">
-            {saved ? `Verified, ends in ${saved.last4}` : "Not needed"}
+          <span className="ml-auto flex shrink-0 items-center gap-3 text-[13px] text-muted">
+            <span className={saved ? "" : "hidden sm:inline"}>
+              {saved ? `Ends in ${saved.last4}` : "Not needed"}
+            </span>
             <button
               type="button"
               onClick={() => setEditing(true)}
@@ -105,46 +93,16 @@ function KeyRow({
           </span>
         )}
       </div>
-      <div className="reveal" data-open={showField} inert={!showField}>
-        <div>
-          <form onSubmit={submit} className="flex gap-2 pb-1 pt-1.5">
-            <input
-              id={id}
-              type="password"
-              value={value}
-              onChange={(event) => setValue(event.target.value)}
-              placeholder={keyHint}
-              autoComplete="off"
-              spellCheck={false}
-              data-1p-ignore
-              data-lpignore="true"
-              aria-invalid={error !== null}
-              className="field h-9 min-w-0 flex-1 px-2.5 text-[13px] placeholder:text-muted/70"
-            />
-            <button
-              type="submit"
-              disabled={!value.trim() || checking}
-              className="btn btn-secondary h-9"
-            >
-              {checking ? "Checking" : "Verify and save"}
-            </button>
-            {(saved || optional) && (
-              <button
-                type="button"
-                onClick={() => {
-                  setEditing(false);
-                  setValue("");
-                  setError(null);
-                }}
-                className="btn btn-quiet h-9"
-              >
-                Cancel
-              </button>
-            )}
-          </form>
-        </div>
-      </div>
-      <StepError message={error} />
+      <KeyForm
+        id={id}
+        provider={provider}
+        open={showField}
+        onSaved={(key) => {
+          setEditing(false);
+          onSaved(key);
+        }}
+        onCancel={saved || optional ? () => setEditing(false) : undefined}
+      />
     </div>
   );
 }

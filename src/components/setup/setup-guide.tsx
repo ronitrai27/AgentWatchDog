@@ -1,7 +1,13 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { findModel, type SetupState, setupProgress } from "@/lib/models";
+import {
+  findModel,
+  isSetUp,
+  type SetupState,
+  setupProgress,
+} from "@/lib/models";
 import { Brand, type BrandId } from "./brand";
 import { ModelsStep } from "./models-step";
 import { RepoStep } from "./repo-step";
@@ -11,6 +17,8 @@ type StepId = "signIn" | "repo" | "models" | "sandbox";
 const ORDER: StepId[] = ["signIn", "repo", "models", "sandbox"];
 /** Lets the check and the rail finish drawing before the next step opens. */
 const ADVANCE_DELAY = 520;
+/** A little longer on the last step, so the full bar is seen before it closes. */
+const CLOSE_DELAY = 1100;
 
 function Checkpoint({ done, current }: { done: boolean; current: boolean }) {
   return (
@@ -71,7 +79,7 @@ function Step({
     <>
       {icon && <Brand id={icon} size={28} />}
       <span
-        className={`text-[15px] font-medium ${locked ? "text-muted" : "text-ink"}`}
+        className={`shrink-0 text-[15px] font-medium ${locked ? "text-muted" : "text-ink"}`}
       >
         {title}
       </span>
@@ -158,46 +166,65 @@ function Progress({ done }: { done: boolean[] }) {
 }
 
 function ModelsSummary({ state }: { state: SetupState }) {
-  const model = findModel(state.orchestrator);
-  if (!model) return null;
-  const sub = findModel(state.subagent);
-  return (
-    <>
+  const chosen = [
+    ...new Set([findModel(state.orchestrator), findModel(state.subagent)]),
+  ].filter((model) => model !== undefined);
+  return chosen.map((model, index) => (
+    <span key={model.id} className="flex min-w-0 items-center gap-1.5">
       <Brand id={model.provider} size={18} />
       <span className="truncate">
         {model.label}
-        {sub && sub.id !== model.id && ` with ${sub.label}`}
+        {index < chosen.length - 1 && ","}
       </span>
-    </>
-  );
+    </span>
+  ));
 }
 
 export function SetupGuide({
   initial,
   isJudge,
   login,
+  reopenAt,
 }: {
   initial: SetupState;
   isJudge: boolean;
   login: string;
+  /** Set when a finished guide was asked for: a step to open, or "open". */
+  reopenAt?: string;
 }) {
+  const router = useRouter();
   const [state, setState] = useState(initial);
+  // A finished guide stays closed until it is asked for.
+  const [closed, setClosed] = useState(() => isSetUp(initial, isJudge));
+  const shown = reopenAt !== undefined || !closed;
   const progress = setupProgress(state, isJudge);
+  const finished = isSetUp(state, isJudge);
   const firstOpen = (from: ReturnType<typeof setupProgress>) =>
     ORDER.find((id) => !from[id]) ?? null;
 
-  const [open, setOpen] = useState<StepId | null>(() => firstOpen(progress));
+  const [open, setOpen] = useState<StepId | null>(
+    () =>
+      firstOpen(progress) ??
+      ORDER.find((id) => id === reopenAt && id !== "signIn") ??
+      null,
+  );
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
 
   /** Saves the change, lets the checkpoint draw, then opens what is next. */
   function complete(change: Partial<SetupState>) {
     const next = { ...state, ...change };
+    const justFinished = !finished && isSetUp(next, isJudge);
     setState(next);
     clearTimeout(timer.current);
     timer.current = setTimeout(
-      () => setOpen(firstOpen(setupProgress(next, isJudge))),
-      ADVANCE_DELAY,
+      () => {
+        setOpen(firstOpen(setupProgress(next, isJudge)));
+        if (!justFinished) return;
+        setClosed(true);
+        if (reopenAt !== undefined) router.replace("/home");
+      },
+      justFinished ? CLOSE_DELAY : ADVANCE_DELAY,
     );
   }
 
@@ -216,8 +243,6 @@ export function SetupGuide({
     };
   };
 
-  const finished = ORDER.every((id) => progress[id]);
-
   return (
     <section aria-labelledby="setup-title">
       <h2
@@ -234,64 +259,68 @@ export function SetupGuide({
             : "Four steps, then Rox has what it needs to work on your repository."}
       </p>
 
-      <Progress done={ORDER.map((id) => progress[id])} />
+      <div className="reveal" data-open={shown} inert={!shown}>
+        <div>
+          <Progress done={ORDER.map((id) => progress[id])} />
 
-      <ol className="mt-10">
-        <Step
-          {...step("signIn")}
-          onToggle={undefined}
-          icon={isJudge ? undefined : "github"}
-          title={isJudge ? "Sign in" : "Sign in with GitHub"}
-          summary={
-            isJudge ? (
-              "Demo user, no GitHub needed"
-            ) : (
-              <span className="truncate text-ink">{login}</span>
-            )
-          }
-        />
-        <Step
-          {...step("repo")}
-          title="Choose a repository"
-          summary={
-            <>
-              <Brand id="github" size={22} />
-              <span className="truncate">{state.repo}</span>
-            </>
-          }
-        >
-          <RepoStep
-            current={state.repo}
-            isJudge={isJudge}
-            onSaved={(repo) => complete({ repo })}
-          />
-        </Step>
-        <Step
-          {...step("models")}
-          title="Choose models"
-          summary={<ModelsSummary state={state} />}
-        >
-          <ModelsStep
-            state={state}
-            isJudge={isJudge}
-            onKeys={(keys) => setState((now) => ({ ...now, keys }))}
-            onSaved={(choice) => complete(choice)}
-          />
-        </Step>
-        <Step
-          {...step("sandbox")}
-          last
-          title="Choose a sandbox"
-          summary={
-            <>
-              <Brand id="docker" size={20} />
-              Docker
-            </>
-          }
-        >
-          <SandboxStep onSaved={() => complete({ sandbox: "docker" })} />
-        </Step>
-      </ol>
+          <ol className="mt-10">
+            <Step
+              {...step("signIn")}
+              onToggle={undefined}
+              icon={isJudge ? undefined : "github"}
+              title={isJudge ? "Sign in" : "Sign in with GitHub"}
+              summary={
+                isJudge ? (
+                  "Demo user, no GitHub needed"
+                ) : (
+                  <span className="truncate text-ink">{login}</span>
+                )
+              }
+            />
+            <Step
+              {...step("repo")}
+              title="Choose a repository"
+              summary={
+                <>
+                  <Brand id="github" size={22} />
+                  <span className="truncate">{state.repo}</span>
+                </>
+              }
+            >
+              <RepoStep
+                current={state.repo}
+                isJudge={isJudge}
+                onSaved={(repo) => complete({ repo })}
+              />
+            </Step>
+            <Step
+              {...step("models")}
+              title="Choose models"
+              summary={<ModelsSummary state={state} />}
+            >
+              <ModelsStep
+                state={state}
+                isJudge={isJudge}
+                onKeys={(keys) => setState((now) => ({ ...now, keys }))}
+                onSaved={(choice) => complete(choice)}
+              />
+            </Step>
+            <Step
+              {...step("sandbox")}
+              last
+              title="Choose a sandbox"
+              summary={
+                <>
+                  <Brand id="docker" size={20} />
+                  Docker
+                </>
+              }
+            >
+              <SandboxStep onSaved={() => complete({ sandbox: "docker" })} />
+            </Step>
+          </ol>
+        </div>
+      </div>
     </section>
   );
 }

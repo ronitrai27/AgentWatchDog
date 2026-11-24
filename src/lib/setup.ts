@@ -18,8 +18,14 @@ export const getSetup = cache(async (userId: string): Promise<SetupState> => {
          FROM user_setup WHERE user_id = $1`,
       [userId],
     ),
-    db().query<{ provider: Provider; last4: string; models: string[] }>(
-      "SELECT provider, last4, models FROM provider_keys WHERE user_id = $1",
+    db().query<{
+      provider: Provider;
+      last4: string;
+      models: string[];
+      verified_at: Date;
+    }>(
+      `SELECT provider, last4, models, verified_at
+         FROM provider_keys WHERE user_id = $1`,
       [userId],
     ),
   ]);
@@ -30,9 +36,9 @@ export const getSetup = cache(async (userId: string): Promise<SetupState> => {
     orchestrator: findModel(row?.orchestrator_model)?.id ?? null,
     subagent: findModel(row?.subagent_model)?.id ?? null,
     keys: Object.fromEntries(
-      keys.rows.map(({ provider, last4, models }) => [
+      keys.rows.map(({ provider, last4, models, verified_at }) => [
         provider,
-        { last4, models },
+        { last4, models, savedAt: verified_at.toISOString() },
       ]),
     ),
     sandbox:

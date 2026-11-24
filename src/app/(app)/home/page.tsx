@@ -17,7 +17,8 @@ export default async function HomePage({
   const isJudge = session.mode === "demo";
   // Quick Judge Mode users are all called "User".
   const displayName = isJudge ? "User" : (session.name ?? session.login);
-  const justSignedIn = (await searchParams).welcome === "1";
+  const params = await searchParams;
+  const justSignedIn = params.welcome === "1";
   const setup = await getSetup(session.uid).catch(() => null);
 
   return (
@@ -25,7 +26,14 @@ export default async function HomePage({
       {justSignedIn && <WelcomeToast name={displayName} />}
       {setup ? (
         <>
-          <SetupGuide initial={setup} isJudge={isJudge} login={session.login} />
+          <SetupGuide
+            initial={setup}
+            isJudge={isJudge}
+            login={session.login}
+            reopenAt={
+              typeof params.setup === "string" ? params.setup : undefined
+            }
+          />
           <Recommended isJudge={isJudge} />
           {isJudge && <TestMode />}
         </>

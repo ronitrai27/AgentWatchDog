@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { type ReactNode, useId, useState } from "react";
 import { Brand } from "./setup/brand";
 import { UserAvatar } from "./user-avatar";
@@ -121,6 +121,37 @@ const NAV: Item[] = [
   },
 ];
 
+const SETTINGS: Item = {
+  label: "Settings",
+  href: "/home/settings",
+  icon: glyph(
+    "M4 8h9M17 8h3M4 16h3M11 16h9M15 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM9 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4z",
+  ),
+};
+
+function NavLink({
+  item,
+  onNavigate,
+}: {
+  item: Item;
+  onNavigate?: () => void;
+}) {
+  const current = usePathname() === item.href;
+  return (
+    <Link
+      href={item.href}
+      onClick={onNavigate}
+      aria-current={current ? "page" : undefined}
+      className={`flex h-8 items-center gap-2.5 rounded-md px-2 text-sm font-semibold text-black transition-colors ${
+        current ? "bg-ink/8" : "hover:bg-ink/6"
+      }`}
+    >
+      {item.icon}
+      {item.label}
+    </Link>
+  );
+}
+
 function Sidebar({
   user,
   repo,
@@ -130,8 +161,6 @@ function Sidebar({
   repo: string | null;
   onNavigate?: () => void;
 }) {
-  const pathname = usePathname();
-
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center border-b border-ink/10 px-2">
@@ -154,30 +183,23 @@ function Sidebar({
                 <span className="ml-auto text-xs">Soon</span>
               </span>
             ) : (
-              <Link
-                key={item.label}
-                href={item.href}
-                onClick={onNavigate}
-                aria-current={pathname === item.href ? "page" : undefined}
-                className={`flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] font-medium text-ink transition-colors ${
-                  pathname === item.href ? "bg-ink/8" : "hover:bg-ink/6"
-                }`}
-              >
-                {item.icon}
-                {item.label}
-              </Link>
+              <NavLink key={item.label} item={item} onNavigate={onNavigate} />
             ),
           )}
         </nav>
       </div>
 
-      <div className="flex items-center gap-2.5 border-t border-ink/10 px-4 py-3">
-        <UserAvatar src={user.avatar} name={user.name} size={28} />
+      <nav aria-label="Account" className="p-2">
+        <NavLink item={SETTINGS} onNavigate={onNavigate} />
+      </nav>
+
+      <div className="flex items-center gap-2.5 border-t border-ink/30 bg-olive-300 px-4 py-3">
+        <UserAvatar src={user.avatar} name={user.name} size={32} />
         <div className="min-w-0">
           <p className="truncate text-[13px] font-medium text-ink">
             {user.name}
           </p>
-          <p className="truncate text-xs text-muted" title={user.detail}>
+          <p className="truncate text-xs " title={user.detail}>
             {user.detail}
           </p>
         </div>
@@ -186,23 +208,42 @@ function Sidebar({
   );
 }
 
+/** Reopens the finished setup guide, or closes it again. */
+function SetupGuideButton() {
+  const pathname = usePathname();
+  const open = useSearchParams().has("setup") && pathname === "/home";
+  return (
+    <Link
+      href={open ? "/home" : "/home?setup=open"}
+      className="btn btn-secondary"
+    >
+      {open && "Close "}
+      <span className={open ? "hidden sm:inline" : ""}>Setup Guide</span>
+    </Link>
+  );
+}
+
 export function AppShell({
   user,
   repo,
-  title,
+  isSetUp,
   children,
 }: {
   user: ShellUser;
   repo: string | null;
-  title: string;
+  /** Setup is finished, so the guide is closed until asked for. */
+  isSetUp: boolean;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const pathname = usePathname();
+  const title =
+    [...NAV, SETTINGS].find((item) => item.href === pathname)?.label ?? "Home";
 
   return (
     <div className="min-h-svh bg-paper md:flex">
       {/* Desktop sidebar */}
-      <aside className="sticky top-0 hidden h-svh w-60 shrink-0 border-r border-ink/10 bg-white/50 md:block">
+      <aside className="sticky top-0 hidden h-svh w-60 shrink-0 border-r border-ink/10 bg-mist-100 md:block">
         <Sidebar user={user} repo={repo} />
       </aside>
 
@@ -226,7 +267,7 @@ export function AppShell({
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-ink/10 bg-paper/90 px-4 backdrop-blur sm:px-5">
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-ink/10 bg-mist-100 px-4 backdrop-blur sm:px-5">
           <div className="flex items-center gap-2.5">
             <button
               type="button"
@@ -240,6 +281,7 @@ export function AppShell({
           </div>
 
           <div className="flex items-center gap-2">
+            {isSetUp && <SetupGuideButton />}
             <form action="/api/auth/logout" method="post">
               <input
                 type="hidden"

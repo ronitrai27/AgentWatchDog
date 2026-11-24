@@ -16,6 +16,7 @@ Read [Architecture.md](Architecture.md) before changing anything in `agent/`. St
 - `pnpm dev` starts the UI.
 - `pnpm lint` runs Biome checks. `pnpm format` formats.
 - `pnpm build` builds the UI.
+- `pnpm db:up`, `pnpm db:migrate` and `pnpm db:selftest` start, migrate and check the database.
 
 The agent service has no commands yet.
 
