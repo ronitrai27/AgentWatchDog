@@ -78,34 +78,23 @@ export function decide(event: string, payload: unknown): Verdict {
     };
   }
 
-  if (event === "workflow_run") {
-    const action = pick(payload, "action");
-    const conclusion = pick(payload, "workflow_run.conclusion");
-    if (action !== "completed")
-      return { trigger: false, why: `workflow_run.${action} is not finished` };
-    if (!BAD_CONCLUSIONS.includes(conclusion))
-      return { trigger: false, why: `the workflow ${conclusion}, not failed` };
-    const branch = pick(payload, "workflow_run.head_branch");
-    if (OWN_BRANCH.test(branch))
-      return { trigger: false, why: `${branch} is a branch Rox made itself` };
+  if (event === "workflow_run")
     return {
-      trigger: true,
-      kind: "ci_failed",
-      key: `${repo}@${pick(payload, "workflow_run.head_sha")}:${pick(payload, "workflow_run.workflow_id")}`,
-      why: `workflow "${pick(payload, "workflow_run.name")}" ${conclusion} on ${branch}`,
+      trigger: false,
+      why: "covered by the check_run event, which every CI sends (Actions, Vercel, tests)",
     };
-  }
 
   if (event === "check_run") {
-    // GitHub Actions is already covered by workflow_run; this catches other CI (Vercel, tests).
+    // The one CI signal: GitHub Actions, Vercel and any test service all send check runs.
     const conclusion = pick(payload, "check_run.conclusion");
     const app = pick(payload, "check_run.app.slug");
     if (pick(payload, "action") !== "completed")
       return { trigger: false, why: "the check has not finished" };
     if (!BAD_CONCLUSIONS.includes(conclusion))
       return { trigger: false, why: `the check ${conclusion}, not failed` };
-    if (app === "github-actions")
-      return { trigger: false, why: "covered by the workflow_run event" };
+    const branch = pick(payload, "check_run.check_suite.head_branch");
+    if (OWN_BRANCH.test(branch))
+      return { trigger: false, why: `${branch} is a branch Rox made itself` };
     return {
       trigger: true,
       kind: "ci_failed",
@@ -114,7 +103,67 @@ export function decide(event: string, payload: unknown): Verdict {
     };
   }
 
+  if (event === "push") {
+    const ref = pick(payload, "ref");
+    if (!ref.startsWith("refs/heads/"))
+      return { trigger: false, why: `${ref} is not a branch` };
+    const branch = ref.slice("refs/heads/".length);
+    if (OWN_BRANCH.test(branch))
+      return { trigger: false, why: `${branch} is a branch Rox made itself` };
+    return {
+      trigger: false,
+      why:
+        branch === defaultBranch
+          ? `a push to ${defaultBranch} is only recorded; the checks that follow it are what Rox hears`
+          : `a push to ${branch} is only recorded; a pull request is what Rox hears`,
+    };
+  }
+
   return { trigger: false, why: `${event} is not used` };
+}
+
+export type Summary = {
+  branch: string | null;
+  sha: string | null;
+  prNumber: number | null;
+  title: string | null;
+};
+
+/** The few fields every event shares, for the trace. */
+export function summarize(event: string, payload: unknown): Summary {
+  const some = (path: string) => {
+    const value = pick(payload, path);
+    return value === "-" ? null : value;
+  };
+  if (event === "pull_request")
+    return {
+      branch: some("pull_request.head.ref"),
+      sha: some("pull_request.head.sha"),
+      prNumber: Number(some("pull_request.number")) || null,
+      title: some("pull_request.title"),
+    };
+  if (event === "workflow_run")
+    return {
+      branch: some("workflow_run.head_branch"),
+      sha: some("workflow_run.head_sha"),
+      prNumber: Number(some("workflow_run.pull_requests.0.number")) || null,
+      title: some("workflow_run.name"),
+    };
+  if (event === "check_run")
+    return {
+      branch: some("check_run.check_suite.head_branch"),
+      sha: some("check_run.head_sha"),
+      prNumber: Number(some("check_run.pull_requests.0.number")) || null,
+      title: some("check_run.name"),
+    };
+  if (event === "push")
+    return {
+      branch: some("ref")?.replace("refs/heads/", "") ?? null,
+      sha: some("after"),
+      prNumber: null,
+      title: some("head_commit.message")?.split("\n")[0] ?? null,
+    };
+  return { branch: null, sha: null, prNumber: null, title: null };
 }
 
 /** The facts of an event, one line each, for the console. */
@@ -168,6 +217,21 @@ export function details(event: string, payload: unknown): [string, string][] {
       ["result", `${c("status")} / ${c("conclusion")}`],
       ["commit", c("head_sha").slice(0, 7)],
       ["link", c("html_url")],
+    );
+  } else if (event === "push") {
+    const commits =
+      (at(payload, "commits") as unknown[] | undefined)?.length ?? 0;
+    rows.push(
+      ["branch", pick(payload, "ref").replace("refs/heads/", "")],
+      [
+        "push",
+        `${pick(payload, "before").slice(0, 7)} -> ${pick(payload, "after").slice(0, 7)}, ${commits} commit${commits === 1 ? "" : "s"}${at(payload, "forced") === true ? ", FORCED" : ""}`,
+      ],
+      [
+        "latest",
+        `"${pick(payload, "head_commit.message").split("\n")[0]}" by ${pick(payload, "head_commit.author.username")}`,
+      ],
+      ["link", pick(payload, "compare")],
     );
   } else if (event === "ping") {
     rows.push([

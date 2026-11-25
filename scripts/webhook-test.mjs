@@ -58,7 +58,20 @@ const run = (conclusion, branch) => ({
   },
 });
 
+const push = (branch) => ({
+  ...base,
+  ref: `refs/heads/${branch}`,
+  before: "0000000aaaaaaa",
+  after: "1a2b3c4d5e6f",
+  forced: false,
+  commits: [{}],
+  head_commit: { message: "Fix cart total", author: { username: "alice" } },
+  compare:
+    "https://github.com/ronitrai27/Testing_SRE_Demo_App/compare/0000000...1a2b3c4",
+});
+
 const SCENARIOS = {
+  "push-main": ["push", push("main")],
   ping: [
     "ping",
     {

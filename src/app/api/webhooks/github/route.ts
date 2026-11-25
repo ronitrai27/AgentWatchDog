@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { decide, details, validSignature } from "@/lib/github-webhook";
+import {
+  decide,
+  details,
+  summarize,
+  validSignature,
+} from "@/lib/github-webhook";
+import { recordEvent, replacedBecause, short } from "@/lib/webhook-ledger";
 
 export const dynamic = "force-dynamic";
-
-// GitHub sends the same delivery again if we answer late, with the same id. Remembering the
-// last few hundred keeps a retry from being treated as a new event. (A database table replaces
-// this when runs start for real.)
-const seen = new Set<string>();
 
 /** The Rox user whose setup points at this repository, or null. */
 async function roxUser(installation: unknown, repo: string) {
@@ -23,7 +24,7 @@ async function roxUser(installation: unknown, repo: string) {
   }
 }
 
-/** Where GitHub (through the relay) tells Rox what happened. For now it only listens and logs. */
+/** Where GitHub (through the relay) tells Rox what happened. For now it records and logs. */
 export async function POST(request: Request) {
   const secret = process.env.GITHUB_APP_WEBHOOK_SECRET;
   if (!secret)
@@ -43,13 +44,6 @@ export async function POST(request: Request) {
   if (!event || !delivery)
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
 
-  if (seen.has(delivery)) {
-    console.log(`[webhook] duplicate ${event} delivery=${delivery}, ignored`);
-    return NextResponse.json({ ok: true, duplicate: true });
-  }
-  seen.add(delivery);
-  if (seen.size > 500) seen.delete(seen.values().next().value as string);
-
   let payload: unknown;
   try {
     payload = JSON.parse(body);
@@ -57,29 +51,78 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "bad_json" }, { status: 400 });
   }
 
-  const p = payload as { action?: string };
+  const p = payload as {
+    action?: string;
+    repository?: { full_name?: string };
+    installation?: { id?: number };
+    sender?: { login?: string };
+  };
+  const repo = p.repository?.full_name ?? null;
   const verdict = decide(event, payload);
+  const summary = summarize(event, payload);
+  const userId =
+    verdict.trigger && repo ? await roxUser(p.installation?.id, repo) : null;
+  const entry = {
+    delivery,
+    event,
+    action: p.action ?? null,
+    repo,
+    installation: p.installation?.id ?? null,
+    sender: p.sender?.login ?? null,
+    summary,
+    verdict,
+    userId,
+  };
+
+  let result: Awaited<ReturnType<typeof recordEvent>>;
+  try {
+    result = await recordEvent(entry);
+  } catch (error) {
+    console.error(
+      `[webhook] could not record ${event} delivery=${delivery}: ${error instanceof Error ? error.message : error}`,
+    );
+    // GitHub shows the delivery as failed, and it can be sent again from the App's settings.
+    return NextResponse.json({ error: "ledger_unavailable" }, { status: 503 });
+  }
+
+  const name = `${event}${p.action ? `.${p.action}` : ""}`;
+  if (result.duplicate) {
+    console.log(
+      `\n[webhook] ${name} delivery=${delivery}\n  DUPLICATE: GitHub sent this delivery again. Already recorded, nothing done.\n`,
+    );
+    return NextResponse.json({ ok: true, duplicate: true });
+  }
+
   const lines = [
-    `[webhook] ${event}${p.action ? `.${p.action}` : ""}  delivery=${delivery}`,
+    `[webhook] ${name}  delivery=${delivery}`,
     ...details(event, payload).map(([k, v]) => `  ${k.padEnd(14)}${v}`),
-    `  ${"decision".padEnd(14)}${verdict.trigger ? `TRIGGER ${verdict.kind}: ${verdict.why}` : `ignored: ${verdict.why}`}`,
+    `  ${"listened".padEnd(14)}${verdict.trigger ? "TRUE" : "false"}`,
+    `  ${"decision".padEnd(14)}${verdict.trigger ? `${verdict.kind}: ${verdict.why}` : `ignored: ${verdict.why}`}`,
   ];
   if (verdict.trigger) {
-    const repo = (payload as { repository?: { full_name?: string } }).repository
-      ?.full_name;
-    const installation = (payload as { installation?: { id?: number } })
-      .installation?.id;
-    const user = repo ? await roxUser(installation, repo) : null;
     lines.push(
       `  ${"run key".padEnd(14)}${verdict.key}`,
-      `  ${"rox user".padEnd(14)}${user ? `matched ${user.slice(0, 8)}` : "none: no Rox user has chosen this repository"}`,
+      `  ${"rox user".padEnd(14)}${userId ? `matched ${userId.slice(0, 8)}` : "none: no Rox user has chosen this repository"}`,
     );
+    for (const r of result.replaced)
+      lines.push(
+        `  ${"SUPERSEDED".padEnd(14)}${r.prNumber ? `PR #${r.prNumber} ` : ""}${short(r.sha)} on ${r.branch ?? "-"} (delivery ${r.delivery}) after ${r.ageSeconds}s: ${replacedBecause(entry)}`,
+      );
+    if (result.replaced.length === 0)
+      lines.push(
+        `  ${"superseded".padEnd(14)}nothing, no older ${verdict.kind} was active`,
+      );
   }
   console.log(`\n${lines.join("\n")}\n`);
 
   // Answer at once. The work itself will run in the background, never in this request.
   return NextResponse.json(
-    { ok: true, event, trigger: verdict.trigger },
+    {
+      ok: true,
+      event,
+      listened: verdict.trigger,
+      superseded: result.replaced.length,
+    },
     { status: 202 },
   );
 }

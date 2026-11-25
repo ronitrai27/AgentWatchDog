@@ -13,7 +13,7 @@ Read [Architecture.md](Architecture.md) before changing anything in `agent/`. Th
 
 ## Commands
 
-- `pnpm dev` starts the UI.
+- `pnpm dev` starts the UI, the agent (inside it) and the relay that brings GitHub webhooks to this machine (`SMEE_URL`). `pnpm dev:web` starts the UI alone. `pnpm webhooks:test all` sends signed sample events to the local webhook route.
 - `pnpm lint` runs Biome checks. `pnpm format` formats.
 - `pnpm build` builds the UI.
 - `pnpm db:up`, `pnpm db:migrate` and `pnpm db:selftest` start, migrate and check the database.
