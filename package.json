@@ -17,7 +17,8 @@
     "db:selftest": "node scripts/db-selftest.mjs",
     "temporal:dev": "node scripts/temporal-dev.mjs",
     "temporal:worker": "pnpm --dir agent run worker",
-    "temporal:hello": "pnpm --dir agent run hello",
+    "lab": "pnpm --dir agent run lab",
+    "lab:viewer": "pnpm --dir Tests viewer",
     "webhooks:test": "node scripts/webhook-test.mjs",
     "agent:test": "pnpm --dir agent run test"
   },

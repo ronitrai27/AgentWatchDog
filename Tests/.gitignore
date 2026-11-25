@@ -1,0 +1,3 @@
+# Run traces, reports and the repository cache are local test output.
+runs/
+.cache/

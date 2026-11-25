@@ -1,13 +1,9 @@
 // Run with: pnpm temporal:worker
-// A Worker polls a Task Queue and runs the Workflows and Activities registered
-// here. Keep it running while you start Workflows.
+// Polls the rox-lab task queue and runs Rox Lab workflows and their steps. Several workers can
+// run at once; if one dies, Temporal gives its unfinished step to another.
 import { NativeConnection, Worker } from "@temporalio/worker";
 import * as activities from "./activities";
-import {
-  HELLO_TASK_QUEUE,
-  TEMPORAL_ADDRESS,
-  TEMPORAL_NAMESPACE,
-} from "./config";
+import { LAB_TASK_QUEUE, TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE } from "./config";
 
 async function run() {
   const connection = await NativeConnection.connect({
@@ -17,14 +13,15 @@ async function run() {
     const worker = await Worker.create({
       connection,
       namespace: TEMPORAL_NAMESPACE,
-      taskQueue: HELLO_TASK_QUEUE,
+      taskQueue: LAB_TASK_QUEUE,
       // Workflows are registered by path because they run in a separate
       // JavaScript context.
       workflowsPath: require.resolve("./workflows"),
       activities,
+      maxConcurrentActivityTaskExecutions: 8,
     });
     console.log(
-      `Worker ready: ${TEMPORAL_ADDRESS}, namespace "${TEMPORAL_NAMESPACE}", queue "${HELLO_TASK_QUEUE}"`,
+      `Rox Lab worker ready: ${TEMPORAL_ADDRESS}, namespace "${TEMPORAL_NAMESPACE}", queue "${LAB_TASK_QUEUE}"`,
     );
     await worker.run();
   } finally {

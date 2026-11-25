@@ -4,4 +4,5 @@
 export const TEMPORAL_ADDRESS =
   process.env.TEMPORAL_ADDRESS ?? "127.0.0.1:7233";
 export const TEMPORAL_NAMESPACE = process.env.TEMPORAL_NAMESPACE ?? "default";
-export const HELLO_TASK_QUEUE = "hello-world";
+/** Rox Lab runs: the checks of one pull request, in the sandbox. */
+export const LAB_TASK_QUEUE = "rox-lab";

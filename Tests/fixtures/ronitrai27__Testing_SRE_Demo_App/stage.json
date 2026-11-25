@@ -1,0 +1,23 @@
+{
+  "about": "How to run the Saltmarket API inside the sandbox for k6, Toxiproxy and Schemathesis. The demo repository itself is not changed.",
+  "target": "api",
+  "services": [
+    {
+      "name": "api",
+      "dir": "apps/api",
+      "command": "node --import ./src/instrument.ts src/main.ts",
+      "port": 4100,
+      "health": "/healthz",
+      "env": {
+        "HOST": "0.0.0.0",
+        "PORT": "4100",
+        "NODE_ENV": "production",
+        "LOG_LEVEL": "warn",
+        "DATABASE_PATH": "/tmp/shop.db",
+        "SENTRY_DSN": ""
+      }
+    }
+  ],
+  "dependencies": [],
+  "dependenciesNote": "The API makes no outgoing calls yet (apps/api/src/modules/payments is empty), so Toxiproxy injects faults between clients and the API."
+}
