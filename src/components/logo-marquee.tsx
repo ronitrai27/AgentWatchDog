@@ -46,7 +46,7 @@ function Tile({ logo }: { logo: Logo }) {
             ? "bg-ink text-paper"
             : logo.fill
               ? ""
-              : "border border-ink/10 bg-[#f4f6f2]"
+              : "border border-ink/20 bg-[#f4f6f2]"
         }`}
       >
         {logo.glyph ??

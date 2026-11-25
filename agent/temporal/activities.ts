@@ -2,10 +2,17 @@
 // every 5 seconds, so a dead worker is noticed within the heartbeat timeout and a cancel
 // reaches the sandbox.
 
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { Context } from "@temporalio/activity";
+import { CASES } from "../../Tests/src/agent/cases";
+import { checkpoints } from "../../Tests/src/agent/checkpoints";
+import { startCase } from "../../Tests/src/agent/lab-run";
+import { type FixResult, runFix } from "../../Tests/src/agent/run";
+import { Workspace } from "../../Tests/src/agent/workspace";
 import {
   type CheckResult,
   type Installed,
@@ -16,7 +23,7 @@ import {
   runCheck,
 } from "../../Tests/src/checks";
 import { destroyRun, ensureVolume } from "../../Tests/src/docker";
-import { cacheDir } from "../../Tests/src/env";
+import { cacheDir, runDir } from "../../Tests/src/env";
 import { emit } from "../../Tests/src/events";
 import {
   changedFiles,
@@ -77,7 +84,11 @@ export async function labPrepare(
     await ensureVolume(v.npmCache);
     const changed = await changedFiles(dir, input.base, input.head);
     const facts = await readFacts(dir, input.repo, changed);
-    const plan = planChecks(facts, Boolean(input.base));
+    const plan = planChecks(
+      facts,
+      Boolean(input.base),
+      input.profile ?? "fast",
+    );
     await emit(input.run, {
       step: "prepare",
       kind: "step.finished",
@@ -119,7 +130,7 @@ export async function labInstall(
       title: "Dependencies",
       status: r.cancelled
         ? "cancelled"
-        : r.head && (r.base || !input.base)
+        : r.head && (r.base || !input.base || input.profile === "fast")
           ? "pass"
           : "error",
       ms: r.ms,
@@ -204,8 +215,100 @@ export async function labFinish(
   });
 }
 
+export type FixInput = {
+  run: string;
+  /** A seeded bug of the lab instead of the installed code of this run. */
+  caseId?: string;
+  workspaces: string[];
+  /** The commits being checked, for the diff the agent sees. */
+  head?: string;
+  base?: string | null;
+};
+
+/**
+ * The fix agent. One activity, because the graph saves a checkpoint after every node: when the
+ * worker dies, Temporal starts this again elsewhere and the graph continues after the last
+ * finished node instead of paying for it twice.
+ */
+export async function labFix(input: FixInput): Promise<FixResult> {
+  return beating(async (signal) => {
+    const { run } = input;
+    await emit(run, {
+      step: "agent",
+      kind: "agent.started",
+      title: input.caseId
+        ? `Seeded bug ${input.caseId}`
+        : "Fixing the failures",
+      status: "running",
+      attempt: attempt(),
+    });
+    let workspace: () => Promise<Workspace>;
+    let fresh: () => Promise<Workspace>;
+    let { workspaces } = input;
+    if (input.caseId) {
+      const bug = CASES.find((c) => c.id === input.caseId);
+      if (!bug) throw new Error(`no such seeded bug: ${input.caseId}`);
+      const lab = await startCase(bug, run);
+      workspaces = [bug.ws];
+      workspace = async () => lab.ws;
+      fresh = lab.fresh;
+    } else {
+      const open = async (kind: "agent" | "verify") => {
+        const ws = new Workspace(run, kind);
+        if (kind === "verify") await ws.close();
+        await ws.open();
+        return ws;
+      };
+      const ws = await open("agent");
+      workspace = async () => ws;
+      fresh = () => open("verify");
+      // Only the workspaces that have tests.
+      const found = await ws.exec([
+        "sh",
+        "-c",
+        `cd ${ws.root} && find ${workspaces.map((w) => `'${w}'`).join(" ")} -name node_modules -prune -o -type f -name '*.test.*' -print`,
+      ]);
+      const files = found.stdout.split(/\r?\n/);
+      workspaces = workspaces.filter((w) =>
+        files.some((f) => f.startsWith(`${w}/`)),
+      );
+    }
+    const change =
+      input.base && input.head
+        ? await promisify(execFile)(
+            "git",
+            [
+              "-C",
+              path.join(cacheDir, "checkouts", run),
+              "diff",
+              "--no-color",
+              "--no-ext-diff",
+              `${input.base}...${input.head}`,
+              "--",
+              ".",
+              ":(exclude)*lock*",
+            ],
+            { maxBuffer: 4 * 1024 * 1024, windowsHide: true },
+          ).then(
+            (r) => r.stdout.slice(0, 20_000),
+            () => "",
+          )
+        : "";
+    const result = await runFix(
+      { run, workspaces, change },
+      { workspace, fresh },
+      { checkpointer: await checkpoints(), signal },
+    );
+    await mkdir(runDir(run), { recursive: true });
+    const patch = result.attempts.at(-1)?.patch ?? "";
+    if (result.outcome === "fixed")
+      await writeFile(path.join(runDir(run), "fix.patch"), patch);
+    return result;
+  });
+}
+
 /** Destroys every container and volume of the run, and the checkout on the host. */
-export async function labCleanup(input: LabInput): Promise<void> {
+export async function labCleanup(input: Pick<LabInput, "run">): Promise<void> {
   const removed = await destroyRun(input.run);
   await rm(path.join(cacheDir, "checkouts", input.run), {
     recursive: true,

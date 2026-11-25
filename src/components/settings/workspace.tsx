@@ -25,7 +25,7 @@ export function Workspace({ setup }: { setup: SetupState }) {
   ];
 
   return (
-    <ul className="divide-y divide-ink/10 border-b border-ink/10">
+    <ul className="divide-y divide-ink/20 border-b border-ink/20">
       {rows.map(({ step, icon, label, value }) => (
         <li key={step} className="flex items-center gap-3.5 py-5">
           <Brand id={icon} size={24} />

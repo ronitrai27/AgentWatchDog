@@ -245,7 +245,7 @@ export function RunPanel() {
   return (
     <div className="overflow-hidden border border-ink/30 bg-white/70 text-left shadow-[0_1px_0_rgba(43,58,48,0.15)]">
       {/* Title bar */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-ink/15 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-ink/25 px-3 py-2">
         <span className="size-3 rounded-full bg-[#e5675c]" />
         <span className="size-3 rounded-full bg-[#e8b84a]" />
         <span className="size-3 rounded-full bg-[#5cb86a]" />
@@ -274,14 +274,14 @@ export function RunPanel() {
       </div>
 
       {/* Stepper */}
-      <ol className="grid grid-cols-7 border-b border-ink/15 text-[10.5px] sm:text-xs">
+      <ol className="grid grid-cols-7 border-b border-ink/25 text-[10.5px] sm:text-xs">
         {STEPS.map((name, i) => {
           const state =
             i < activeStep ? "done" : i === activeStep ? "active" : "todo";
           return (
             <li
               key={name}
-              className={`flex flex-col gap-1 border-r border-ink/10 px-2 py-2 last:border-r-0 sm:px-3 ${
+              className={`flex flex-col gap-1 border-r border-ink/20 px-2 py-2 last:border-r-0 sm:px-3 ${
                 state === "active" ? "bg-ink/6" : ""
               }`}
             >
@@ -309,8 +309,8 @@ export function RunPanel() {
 
       <div className="grid lg:grid-cols-[1.35fr_1fr]">
         {/* Live trace */}
-        <div className="border-b border-ink/15 lg:border-r lg:border-b-0">
-          <div className="flex items-center justify-between border-b border-ink/10 px-4 py-2 text-[10px] uppercase tracking-wider text-ink-muted">
+        <div className="border-b border-ink/25 lg:border-r lg:border-b-0">
+          <div className="flex items-center justify-between border-b border-ink/20 px-4 py-2 text-[10px] uppercase tracking-wider text-ink-muted">
             <span>Live trace · append-only</span>
             <span>{shown.length} events</span>
           </div>
@@ -345,7 +345,7 @@ export function RunPanel() {
 
         {/* Verification matrix */}
         <div>
-          <div className="flex items-center justify-between border-b border-ink/10 px-4 py-2 text-[10px] uppercase tracking-wider text-ink-muted">
+          <div className="flex items-center justify-between border-b border-ink/20 px-4 py-2 text-[10px] uppercase tracking-wider text-ink-muted">
             <span>Verification gates</span>
             <span>
               {resolved} / {TOTAL_CHECKS} passed
@@ -390,7 +390,7 @@ export function RunPanel() {
       </div>
 
       {/* Outputs bar */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-ink/15 bg-ink/4 px-4 py-2.5 text-xs">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-ink/25 bg-ink/4 px-4 py-2.5 text-xs">
         <span className="text-ink-muted">Outputs</span>
         <Output on={count > 14} label="PR awd/fix-cart-total (draft)" />
         <Output on={count > 15} label="Linear RX-142" />

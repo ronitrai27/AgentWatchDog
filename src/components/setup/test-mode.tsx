@@ -29,7 +29,7 @@ const ROWS: { part: string; demo: string; real: string }[] = [
 /** Judges only: what is real in the demo. It describes the plan. */
 export function TestMode() {
   return (
-    <details className="group mt-10 border-t border-ink/12 pt-6">
+    <details className="group mt-10 border-t border-ink/20 pt-6">
       <summary className="focusable cursor-pointer list-none rounded text-[15px] font-medium text-ink">
         What is real and what is test mode
         <span className="ml-3 text-[13px] font-normal text-ink-soft underline decoration-ink/25 underline-offset-[3px]">
@@ -44,7 +44,7 @@ export function TestMode() {
       <div className="mt-3 overflow-x-auto">
         <table className="w-full min-w-[560px] text-left text-[13px]">
           <thead className="text-ink-muted">
-            <tr className="border-b border-ink/12">
+            <tr className="border-b border-ink/20">
               <th className="py-2 pr-6 font-normal">Part of a run</th>
               <th className="py-2 pr-6 font-normal">Quick Demo Mode</th>
               <th className="py-2 font-normal">Your accounts</th>
@@ -52,7 +52,7 @@ export function TestMode() {
           </thead>
           <tbody className="align-top text-ink-soft">
             {ROWS.map((row) => (
-              <tr key={row.part} className="border-b border-ink/8">
+              <tr key={row.part} className="border-b border-ink/18">
                 <th scope="row" className="py-2.5 pr-6 font-medium text-ink">
                   {row.part}
                 </th>

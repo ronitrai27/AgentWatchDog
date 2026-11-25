@@ -1,6 +1,6 @@
 # Rox Lab: the test agent
 
-Status: plan. Nothing below is built yet. Started 2026-11-25.
+Status: Phase 1 almost complete (the performance comparison and Stryker were never seen finishing). Phase 2 in progress. Started 2026-11-25.
 
 ## The goal
 
@@ -10,11 +10,16 @@ It runs inside a Temporal workflow. A page refresh, a lost network, a crashed wo
 
 Everything is built and proven here in `Tests/` first. Only what passes Phase 3 is moved into the real agent.
 
+## Always use these
+
+- `R:\agent_Knowledge\claude_research\agentdesign.md`: the agent design rules (read Part 1 and Part 17 first).
+- The installed LangChain skills, before any agent code: `langchain-build-agent`, `langchain-fundamentals`, `langchain-middleware`, `langgraph-fundamentals`, `langgraph-persistence`, `langgraph-human-in-the-loop`; and the `docs-langchain` / `reference-langchain` MCP servers for API details.
+
 ## Rules for this work
 
 1. **The real agent is not touched.** No edits in `agent/src` or `src/`. The only folder outside `Tests/` that changes is `agent/temporal/` (the hello-world example is replaced by real workflows).
 2. **Test models only:** `gpt-4.1-mini` for thinking, fixing and judging, `gpt-4.1-nano` for small jobs (classifying, summarising tool output). Never another model in tests.
-3. **Nothing is stored for real.** Events go to one JSONL file per run under `Tests/runs/`, and to the live stream. No database tables.
+3. **Nothing is stored for real.** Events go to one JSONL file per run under `Tests/runs/`, and to the live stream. The only database is the lab's own container (`rox-lab-db`, port 5439, this machine only): it holds the LangGraph checkpoints a run needs to resume. Rox's own database is never opened.
 4. **Every step is traced** with a timestamp, its duration, its inputs (secrets removed) and its result.
 5. **Code decides, the model suggests.** The order of steps, every limit, every permission and the final pass or fail are enforced in code, never in a prompt (agentdesign.md, Part 1 and Part 13).
 6. **The agent that fixes never grades its own fix** (Part 1, rule 4).
@@ -119,9 +124,9 @@ The goal is to prove the hard infrastructure first: a locked-down sandbox, all c
 - [x] `Tests/` set up as its own package with its own `tsconfig.json`, so the main app's build never compiles it
 - [x] Sandbox image `rox-sandbox:1` with pinned tools and offline vulnerability databases (`Tests/sandbox/Dockerfile`)
 - [x] Sandbox runner (the only code that talks to Docker) with every rule from the table above (`Tests/src/docker.ts`)
-- [ ] Dependency cache builder, offline install in checks. **Partly done:** dependencies install in a separate step with no secrets and scripts off, but its network is the normal Docker network, not yet registry-only
+- [x] Dependency install: separate step, no secrets, scripts off, npm registry only (egress proxy); checks run offline
 - [ ] The 18 checks. **Part 1 done:** lint, format, TypeScript, tests (JUnit), build, Semgrep, Gitleaks, OSV-Scanner, Trivy (SARIF). **Part 2 to build:** Stryker, Schemathesis, k6, Toxiproxy, regression replay, flaky detection, performance comparison
-- [ ] k6 scripts and an OpenAPI spec for the demo app, kept as test fixtures in `Tests/fixtures/` (the demo repo itself is not changed)
+- [x] k6 scripts and an OpenAPI spec for the demo app, kept as test fixtures in `Tests/fixtures/` (the demo repo itself is not changed)
 - [x] Temporal workflow and worker in `agent/temporal/` that run the checks as Activities; hello world removed
 - [x] Event writer (JSONL) and an SSE endpoint; a plain test page that shows the live events (`pnpm lab:viewer`, http://127.0.0.1:8790)
 - [x] Cancel-and-replace: a newer run for the same pull request cancels the old one, with the trace (`pnpm lab start --pr 1`, `pnpm lab cancel --pr 1`)
@@ -136,7 +141,9 @@ The goal is to prove the hard infrastructure first: a locked-down sandbox, all c
 | Worker killed mid-run | The 3 steps in flight ran again as attempt 2; the 6 finished steps did not run again; the run completed and left nothing behind |
 | Replaced by a newer run | The old run is marked cancelled with the reason, its in-flight checks say `cancelled`, the sandbox is destroyed last, nothing is left behind |
 | Kill switch speed | A cancel reached the running tests in about 6 seconds (heartbeat timeout 10 s) |
-| Not tested yet | Restarting Temporal or the computer mid-run |
+| Temporal and the worker killed mid-run | After a restart the same run continued with Schemathesis as attempt 2, finished, and cleaned up. A full computer restart was not tried |
+| Registry-only install | 4 more rules held (16 in all): the npm registry works only through the proxy, other hosts and plain HTTP are refused, nothing gets out without it |
+| Part 2 checks | Worked: regression replay, flaky detection, k6 (628,419 requests, 0% errors), Toxiproxy (6 of 6), Schemathesis (6 of 11 operations with findings). **Never seen finishing:** performance comparison, Stryker |
 
 **Proof Phase 1 is done**
 - All checks run on PR #1 of the demo app and produce reports. The deliberately failing test is reported as failing.
@@ -147,22 +154,57 @@ The goal is to prove the hard infrastructure first: a locked-down sandbox, all c
 
 ## Phase 2: The agent
 
-The goal is the brain and helpers from the table above, working on easy cases.
+Status on 2026-11-26: the agent works on all 3 seeded bugs. Crash resume, pull request #1 and publishing are still open.
 
-- [ ] LangGraph graph per agent step, with state, nodes, `submit` and `give_up`
-- [ ] Triage and plan with `gpt-4.1-nano` and `gpt-4.1-mini`
-- [ ] Diagnose with up to 3 read-only helpers returning short findings with evidence
-- [ ] Reproduce: a failing test accepted only if it fails 5 of 5 times for the expected reason
-- [ ] Fix in a writable sandbox copy, at most 3 attempts, each attempt's failure carried to the next
-- [ ] Verify in a fresh sandbox: code gates first, then the separate judge, which can only reject
-- [ ] Budgets and limits enforced in code: calls, cost, time, attempts
-- [ ] Publish: branch `awd/<run>` and a pull request on the demo repo with the line-level diff and evidence
-- [ ] Every model call traced: step, model, tokens, cost, time
+**Architecture:** a LangGraph `StateGraph` workflow with an evaluator-optimizer loop. Code owns the order and the verdict; three of the six nodes call a small ReAct agent (`createAgent`).
+
+```
+triage -> investigate -> fix -> verify -> judge -> report
+            ^   ^         |       |         |
+            |   +---------+-------+---------+   refused: back with the reason (3 attempts)
+            +-- a cause without proof (2 times)
+```
+
+| Node | Who | What it may do |
+|---|---|---|
+| triage | code | Runs the tests, re-runs failures; only what fails 3 of 3 times becomes the contract |
+| investigate | gpt-4.1-mini, ReAct | Read only. Names the cause with quoted lines; code checks each quote exists in the file |
+| fix | gpt-4.1-mini, ReAct | 5 tools; the only node that can edit; edit rules enforced by code |
+| verify | code | 8 gates in a fresh copy the agent never touched |
+| judge | gpt-4.1-mini, one call | Sees the problem and the patch only; can only reject |
+| report | code | Outcome, cost, attempts |
+
+- [x] LangGraph graph with typed state, nodes, routing and an honest end (`Tests/src/agent/graph.ts`)
+- [x] Triage. Changed from the plan: code, not a model
+- [x] Diagnose with proven evidence. Changed from the plan: one Investigator instead of 3 helpers
+- [ ] Reproduce. Not needed for a pull request or CI failure (the failing test exists, and must fail 3 of 3); needed later for Sentry errors
+- [x] Fix in a writable sandbox copy, at most 3 attempts; a refused attempt goes back to the Investigator with the reason
+- [x] Verify in a fresh sandbox: code gates first, then the separate judge, which can only reject
+- [x] Budgets and limits enforced in code: model calls, tool calls, cost ($0.06 per run), time, attempts
+- [ ] Publish: branch and pull request (waits for open question 2). The fix is saved as `runs/<run>/fix.patch`
+- [x] Every model call traced: step, model, tokens, cost, time
+- [x] Runs as a Temporal activity with checkpoints in Postgres and saves the patch: one full run, no crash
+- [ ] Crash resume proven (the test was stopped before the worker was killed)
+- [ ] Run on pull request #1 (`pnpm lab start --pr 1 --fix`; never run)
+
+**Results so far**
+
+| Bug | Result | Time | Model calls | Cost |
+|---|---|---|---|---|
+| paging-skips | Fixed with the original line, 1 attempt | 139 s | 9 | $0.0039 |
+| stock-zero | Fixed with the original line, 1 attempt | 181 s | 11 | $0.0053 |
+| expired-session | Fixed with the original line, 1 attempt | 165 s | 16 | $0.0068 |
+| stock-zero, through Temporal (final version) | Fixed with the original line, 1 attempt, sandbox destroyed | 102 s | 10 | $0.0049 |
+
+- paging-skips failed on earlier versions (it stopped without a fix 3 times: two bugs of ours, and one wrong cause that the quote check refused). The final version has been run once on paging-skips and once on stock-zero; expired-session ran before the re-investigate loop was added. One good run per bug is not yet proof of reliability.
+- Verify accepts the right fix and refuses: no change, code that does not compile, a fix that breaks another feature, a deleted test, a weakened test, and code that behaves differently under test. A compiling but wrong fix is refused too.
+- The build gate failed once for no known reason on a correct fix; it now gets a second try.
+- Not exercised yet: the re-investigate loop after a refused attempt, the budget stop, the judge rejecting a fix.
 
 **Proof Phase 2 is done**
-- 3 seeded, ordinary bugs in a copy of the demo app are each fixed, verified and published as a pull request.
-- A wrong patch, an edited test and a deleted check are all rejected by Verify.
-- Killing the worker during Fix resumes the attempt without starting over and without a duplicate pull request.
+- [ ] 3 seeded, ordinary bugs in a copy of the demo app are each fixed, verified and published as a pull request. (Fixed and verified: yes. Published: no.)
+- [x] A wrong patch, an edited test and a deleted check are all rejected by Verify.
+- [ ] Killing the worker during Fix resumes the attempt without starting over and without a duplicate pull request.
 
 ## Phase 3: Extreme cases, hardening, and the move to the real agent
 
@@ -193,3 +235,40 @@ The goal is to break the agent on purpose and keep only what survives.
 1. A new push to the same pull request replaces the old run. Should a different pull request also replace it, or run alongside it? Today's ledger replaces any older event of the same kind in the same repository.
 2. Where pull requests from the test agent go: the demo repo, or a fork of it, so test runs never touch the real `main`.
 3. How long a run may take in total before it is stopped (proposed: 30 minutes, set in Settings).
+
+---
+
+## What to run and what to skip (from measured times, 2026-11-26)
+
+Times are for the demo app on an idle machine, rounded; on a busy one they were up to 5 times longer. A `~` marks an estimate that was not measured alone.
+
+| Step | Time | Finds | Decision |
+|---|---|---|---|
+| Get the code | 5 to 10 s | | **Every run** |
+| Install, head only | ~25 s (38 s measured with Stryker) | | **Every run** |
+| Gitleaks, Trivy | 1 s, 7 s | Secrets, vulnerable files | **Every run** |
+| TypeScript, tests, build | 6 s, 20 s, 20 s | Real bugs | **Every run** |
+| OSV-Scanner, Semgrep | 20 to 27 s, 25 to 34 s (in parallel) | Vulnerable dependencies, unsafe code | **Every run** |
+| Lint, format | 1 to 2 s | Style | **Every run, no AI.** The tool fixes these itself; never spend a token on them |
+| Re-run failing tests 3 times | seconds | Real failure or noise | **In the agent's triage**, when something failed. The checks alone do not re-run |
+| Toxiproxy | 12 s | Crashes under bad networks | Only with `--full` for now; worth running when server code changed |
+| k6 smoke | ~10 s | Broken endpoints | Only with `--full` for now; worth running when server code changed |
+| Schemathesis | 97 s | API contract problems | Only with `--full` for now; worth running when routes changed |
+| Install base + Stryker | ~40 s more idle, over 5 min busy | | **Skip by default.** Only for the nightly run |
+| Regression replay on the base | 14 s, but needs the base install | Who broke it | **Skip by default**; "fails 3 of 3 on head" is enough to act |
+| Flaky detection (whole suite x 5) | 55 to 126 s | Flaky tests | Nightly |
+| k6 load, stress, soak | 137 s | Slowdowns | Nightly |
+| Performance against the base | about 130 s | Slowdowns | Nightly |
+| Stryker | minutes | Weak tests | Nightly |
+
+**Result:** a normal run should take about 2 minutes instead of 12 or more (estimate; the measured time is in the Phase 2 results). `pnpm lab start --pr 1` uses this fast profile; add `--full` for everything.
+
+**Agent steps left out on purpose**
+
+| Left out | Why |
+|---|---|
+| A model for triage and planning | Code can tell what failed; the plan is always the same steps |
+| Three helper agents | Two agents and a judge. Reading splits well, but these bugs are small and coupled, and helpers cost several times the tokens |
+| Writing a new failing test for a PR or CI failure | The failing test already exists; it becomes the frozen contract. Only needed later for Sentry errors |
+| A free shell for the agent | Five small tools are cheaper, safer, and enough |
+| Copying `node_modules` per attempt | Mounted read-only instead: minutes became seconds, and the agent cannot change dependencies |

@@ -53,7 +53,7 @@ export function SandboxStep({ onSaved }: { onSaved: () => void }) {
         your production.
       </p>
 
-      <fieldset className="mt-3 divide-y divide-ink/10 rounded-lg border border-ink/15 bg-white">
+      <fieldset className="mt-3 divide-y divide-ink/20 rounded-lg border border-ink/25 bg-white">
         <legend className="sr-only">Sandbox</legend>
         {SANDBOXES.map((sandbox) => (
           <label

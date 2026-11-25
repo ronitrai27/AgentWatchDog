@@ -42,7 +42,7 @@ function Row({
 }) {
   const Label = htmlFor ? "label" : "p";
   return (
-    <div className="grid items-center gap-x-10 gap-y-3 border-b border-ink/10 py-6 sm:grid-cols-[minmax(0,1fr)_280px]">
+    <div className="grid items-center gap-x-10 gap-y-3 border-b border-ink/20 py-6 sm:grid-cols-[minmax(0,1fr)_280px]">
       <div>
         <Label
           {...(htmlFor ? { htmlFor } : {})}
@@ -60,7 +60,7 @@ function Row({
 function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section>
-      <h4 className="border-b border-ink/10 pt-10 pb-3 font-rox text-[15px] font-semibold text-ink">
+      <h4 className="border-b border-ink/20 pt-10 pb-3 font-rox text-[15px] font-semibold text-ink">
         {title}
       </h4>
       {children}
@@ -117,11 +117,11 @@ export function SettingsView({
 
   return (
     <div className="-mx-4 -my-8 sm:-mx-6 sm:-my-12 flex min-h-[calc(100svh-3.5rem)] flex-col bg-white">
-      <div className="border-b border-ink/10 bg-paper px-6 py-8 sm:px-12">
+      <div className="border-b border-ink/20 bg-linear-to-r from-paper to-green-900/40 px-6 py-8 sm:px-12">
         <h2 className="font-rox text-[26px] font-semibold leading-tight tracking-tight text-ink">
           Settings
         </h2>
-        <p className="mt-1.5 text-[14px] text-ink/60">
+        <p className="mt-1.5 text-[14px] text-ink">
           Manage where Rox works and how it behaves.
         </p>
       </div>
@@ -129,7 +129,7 @@ export function SettingsView({
       <div className="flex flex-1 flex-col md:flex-row">
         <nav
           aria-label="Settings"
-          className="flex shrink-0 overflow-x-auto border-b border-ink/10 px-4 py-2 md:w-56 md:flex-col md:overflow-visible md:border-r md:border-b-0 md:py-8 md:pr-0 md:pl-12"
+          className="flex shrink-0 overflow-x-auto border-b border-ink/20 px-4 py-2 md:w-56 md:flex-col md:overflow-visible md:border-r md:border-b-0 md:py-8 md:pr-0 md:pl-12"
         >
           {TABS.map((t) => (
             <button
@@ -149,7 +149,7 @@ export function SettingsView({
         </nav>
 
         <div className="min-w-0 flex-1">
-          <div className="border-b border-ink/10 px-6 py-7 sm:px-12">
+          <div className="border-b border-ink/20 px-6 py-7 sm:px-12">
             <h3 className="font-rox text-[18px] font-semibold text-ink">
               {tab.label}
             </h3>
@@ -245,7 +245,7 @@ function ConfigForm({
           placeholder="Choose a tone"
         />
       </Row>
-      <div className="border-b border-ink/10 py-6">
+      <div className="border-b border-ink/20 py-6">
         <div className="flex items-baseline justify-between gap-4">
           <label
             htmlFor="agent-instructions"

@@ -4,6 +4,8 @@
 //   pnpm lab start --pr 1 [--repo owner/name] [--wait]
 //   pnpm lab start --ref main --base <sha> [--repo owner/name] [--wait]
 //   pnpm lab cancel --pr 1 [--repo owner/name]
+//   pnpm lab case <seeded bug> [--wait]
+// Add --fix to start to let the agent fix what failed, --full for the slow checks.
 import {
   Client,
   Connection,
@@ -12,7 +14,7 @@ import {
 } from "@temporalio/client";
 import { commitSha, pullInfo } from "../../Tests/src/github";
 import { LAB_TASK_QUEUE, TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE } from "./config";
-import { labChecks, replacedSignal } from "./workflows";
+import { labCase, labChecks, replacedSignal } from "./workflows";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => {
@@ -43,7 +45,30 @@ async function stopRunning(client: Client, workflowId: string, why: string) {
   }
 }
 
+/** The fix agent on one seeded bug. */
+async function startSeeded(caseId: string) {
+  const connection = await Connection.connect({ address: TEMPORAL_ADDRESS });
+  const client = new Client({ connection, namespace: TEMPORAL_NAMESPACE });
+  const handle = await client.workflow.start(labCase, {
+    taskQueue: LAB_TASK_QUEUE,
+    workflowId: `lab:case:${caseId}`,
+    workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE,
+    args: [caseId],
+  });
+  console.log(`Started ${caseId}`);
+  console.log(`  run    ${handle.firstExecutionRunId}`);
+  console.log(`  watch  ${VIEWER}/runs/${handle.firstExecutionRunId}`);
+  if (args.includes("--wait")) {
+    const r = await handle.result();
+    console.log(
+      `  ${r.outcome}${r.resumed ? " (resumed)" : ""}: ${r.attempts.length} attempts, ${r.modelCalls} model calls, $${r.usd.toFixed(4)}\n  ${r.reason}`,
+    );
+  }
+  await connection.close();
+}
+
 async function main() {
+  if (command === "case" && args[1]) return startSeeded(args[1]);
   if (!["start", "cancel"].includes(command ?? "") || (!pr && !ref)) {
     console.log(
       "Usage: pnpm lab start --pr <number> [--repo owner/name] [--wait]",
@@ -82,7 +107,15 @@ async function main() {
     taskQueue: LAB_TASK_QUEUE,
     workflowId,
     workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE,
-    args: [{ repo, pr: pr || null, ...target }],
+    args: [
+      {
+        repo,
+        pr: pr || null,
+        profile: args.includes("--full") ? "full" : "fast",
+        fix: args.includes("--fix"),
+        ...target,
+      },
+    ],
   });
   console.log(`Started ${workflowId}`);
   console.log(`  run    ${handle.firstExecutionRunId}`);

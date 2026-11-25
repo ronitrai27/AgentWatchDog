@@ -1,6 +1,7 @@
 packages:
   - "."
   - "agent"
+  - "Tests"
 
 ignoredBuiltDependencies:
   - sharp

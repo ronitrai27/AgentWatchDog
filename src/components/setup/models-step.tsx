@@ -161,7 +161,7 @@ export function ModelsStep({
 
       <div className="reveal" data-open={chosen} inert={!chosen}>
         <div>
-          <div className="mt-2 border-t border-ink/12 pt-2">
+          <div className="mt-2 border-t border-ink/20 pt-2">
             {providers.map((provider) => (
               <KeyRow
                 key={provider}

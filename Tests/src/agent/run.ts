@@ -1,0 +1,79 @@
+// Runs the graph for one run. The checkpoint of every finished node is written before the next one
+// starts (durability "sync"), so calling this again with the same run continues after the last
+// finished node, on any worker.
+import type { BaseCheckpointSaver } from "@langchain/langgraph";
+import { emit } from "../events";
+import { buildGraph, type FixContext, type FixState } from "./graph";
+import { Spend } from "./spend";
+
+export type FixResult = Pick<
+  typeof FixState.State,
+  "outcome" | "reason" | "attempts" | "findings" | "verdict"
+> & { usd: number; tokens: number; modelCalls: number; resumed: boolean };
+
+export async function runFix(
+  input: { run: string; workspaces: string[]; change?: string },
+  deps: Pick<FixContext, "workspace" | "fresh">,
+  options: {
+    checkpointer: BaseCheckpointSaver;
+    signal?: AbortSignal;
+  },
+): Promise<FixResult> {
+  const { run, workspaces } = input;
+  const graph = buildGraph(options.checkpointer);
+  const config = {
+    configurable: { thread_id: run },
+    context: {
+      run,
+      spend: await Spend.load(run),
+      ...deps,
+    } satisfies FixContext,
+    durability: "sync" as const,
+    recursionLimit: 30,
+    signal: options.signal,
+  };
+  const saved = await graph.getState({ configurable: { thread_id: run } });
+  const resumed = saved.next.length > 0;
+  const finished = !resumed && Boolean(saved.values?.outcome);
+  if (resumed)
+    await emit(run, {
+      step: "agent",
+      kind: "agent.resumed",
+      title: `Continuing at ${saved.next.join(", ")} after a restart`,
+    });
+  if (!finished) {
+    let t = Date.now();
+    const stream = await graph.stream(
+      resumed ? null : { workspaces, change: input.change ?? "" },
+      {
+        ...config,
+        streamMode: "updates",
+      },
+    );
+    for await (const update of stream)
+      for (const node of Object.keys(update)) {
+        await emit(run, {
+          step: node,
+          kind: "node.finished",
+          title: `${node} finished`,
+          ms: Date.now() - t,
+        });
+        t = Date.now();
+      }
+  }
+  const { values } = await graph.getState({
+    configurable: { thread_id: run },
+  });
+  const { spend } = config.context;
+  return {
+    outcome: values.outcome ?? null,
+    reason: values.reason ?? "",
+    attempts: values.attempts ?? [],
+    findings: values.findings ?? null,
+    verdict: values.verdict ?? null,
+    usd: spend.usd,
+    tokens: spend.tokens,
+    modelCalls: spend.calls,
+    resumed,
+  };
+}

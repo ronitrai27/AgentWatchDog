@@ -165,7 +165,7 @@ export function Composer({
         if (canSend) onSend();
       }}
     >
-      <InputGroup className="rounded-2xl border-ink/20 bg-white shadow-[0_1px_3px_rgb(43_58_48/0.10)] has-disabled:bg-white has-disabled:opacity-100 has-[[data-slot=input-group-control]:focus-visible]:border-ink/20! has-[[data-slot=input-group-control]:focus-visible]:ring-0! dark:bg-white">
+      <InputGroup className="rounded-xl border-ink/20 bg-white shadow-[0_1px_3px_rgb(43_58_48/0.10)] has-disabled:bg-white has-disabled:opacity-100 has-[[data-slot=input-group-control]:focus-visible]:border-ink/20! has-[[data-slot=input-group-control]:focus-visible]:ring-0! dark:bg-white">
         <InputGroupTextarea
           ref={area}
           value={value}

@@ -9,6 +9,7 @@ import {
   setHandler,
   workflowInfo,
 } from "@temporalio/workflow";
+import type { FixResult } from "../../Tests/src/agent/run";
 import type { CheckResult } from "../../Tests/src/checks";
 // Only types are imported: workflow code runs in Temporal's deterministic sandbox.
 import type * as activities from "./activities";
@@ -33,7 +34,10 @@ const cleanup = proxyActivities<typeof activities>({
 /** Sent just before a cancel, to say why the run is being stopped. */
 export const replacedSignal = defineSignal<[string]>("replaced");
 
-export type LabStart = Omit<LabInput, "run" | "workflowId">;
+export type LabStart = Omit<LabInput, "run" | "workflowId"> & {
+  /** Let the agent fix what failed. */
+  fix?: boolean;
+};
 
 export async function labChecks(start: LabStart): Promise<CheckResult[]> {
   let reason: string | null = null;
@@ -68,6 +72,15 @@ export async function labChecks(start: LabStart): Promise<CheckResult[]> {
         results.push(await steps.labCheck(input, item, facts, installed, [])),
       ),
     ]);
+    const failed = (id: string) =>
+      results.some((r) => r.id === id && r.status === "fail");
+    if (start.fix && installed.head && (failed("test") || failed("typecheck")))
+      await steps.labFix({
+        run: input.run,
+        workspaces: facts.workspaces,
+        head: input.head,
+        base: input.base,
+      });
     await steps.labFinish(input, results, "completed", null);
     return results;
   } catch (error) {
@@ -89,5 +102,17 @@ export async function labChecks(start: LabStart): Promise<CheckResult[]> {
     throw error;
   } finally {
     await CancellationScope.nonCancellable(() => cleanup.labCleanup(input));
+  }
+}
+
+/** The fix agent alone, on one seeded bug of the lab. */
+export async function labCase(caseId: string): Promise<FixResult> {
+  const { runId } = workflowInfo();
+  try {
+    return await steps.labFix({ run: runId, caseId, workspaces: [] });
+  } finally {
+    await CancellationScope.nonCancellable(() =>
+      cleanup.labCleanup({ run: runId }),
+    );
   }
 }

@@ -2,11 +2,29 @@
   "name": "rox-lab",
   "version": "0.1.0",
   "private": true,
-  "description": "Rox Lab: the test agent, its sandbox and its checks. Runs with the agent package's tools (tsx, Temporal).",
+  "description": "Rox Lab: the test agent, its sandbox and its checks.",
   "scripts": {
     "image": "docker build -t rox-sandbox:1 sandbox",
-    "viewer": "pnpm --dir ../agent exec tsx ../Tests/src/viewer.ts",
-    "proof:isolation": "pnpm --dir ../agent exec tsx ../Tests/src/proof-isolation.ts",
-    "typecheck": "pnpm --dir ../agent exec tsc --noEmit -p ../Tests"
+    "viewer": "tsx src/viewer.ts",
+    "proof:isolation": "tsx src/proof-isolation.ts",
+    "proof:tools": "tsx src/agent/proof-tools.ts",
+    "proof:gates": "tsx src/agent/proof-gates.ts",
+    "eval": "tsx src/agent/eval.ts",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@langchain/core": "^1.5.1",
+    "@langchain/langgraph": "^1.7.5",
+    "@langchain/langgraph-checkpoint-postgres": "1.1.4",
+    "@langchain/openai": "^1.8.5",
+    "langchain": "^1.6.8",
+    "pg": "^8.23.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
   }
 }

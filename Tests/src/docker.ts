@@ -15,7 +15,13 @@ export const LIMITS = {
 /** The most output kept in memory per stream. The rest is cut from the front. */
 const TAIL = 64 * 1024;
 
-export type Mount = { volume: string; at: string; readOnly: boolean };
+export type Mount = {
+  volume: string;
+  at: string;
+  readOnly: boolean;
+  /** Only this folder of the volume. */
+  subpath?: string;
+};
 
 /**
  * "none": no network at all (every check that does not need the running app).
@@ -122,10 +128,14 @@ export function sandboxFlags(c: SandboxCommand): string[] {
     LIMITS.memory,
     "--workdir",
     c.workdir,
-    ...c.mounts.flatMap((m) => [
-      "-v",
-      `${m.volume}:${m.at}${m.readOnly ? ":ro" : ""}`,
-    ]),
+    ...c.mounts.flatMap((m) =>
+      m.subpath
+        ? [
+            "--mount",
+            `type=volume,src=${m.volume},dst=${m.at},volume-subpath=${m.subpath}${m.readOnly ? ",readonly" : ""}`,
+          ]
+        : ["-v", `${m.volume}:${m.at}${m.readOnly ? ":ro" : ""}`],
+    ),
     ...Object.entries(c.env ?? {}).flatMap(([k, v]) => ["-e", `${k}=${v}`]),
   ];
 }

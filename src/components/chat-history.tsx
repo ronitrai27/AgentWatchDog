@@ -69,7 +69,9 @@ export function ChatHistory({ onNavigate }: { onNavigate?: () => void }) {
                   title={chat.name}
                   aria-current={active ? "page" : undefined}
                   className={`block h-8 truncate rounded-md px-2 text-[13px] leading-8 text-ink ${
-                    active ? "bg-ink/8" : "hover:bg-ink/6"
+                    active
+                      ? "border bg-linear-to-r from-paper to-green-800/10 font-medium text-black"
+                      : "hover:bg-ink/6"
                   }`}
                 >
                   {chat.name}

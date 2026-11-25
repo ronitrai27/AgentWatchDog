@@ -170,7 +170,7 @@ export function EnvVariables({ setup }: { setup: SetupState }) {
   return (
     <section aria-label="API keys">
       {saved.length > 0 ? (
-        <ul className="divide-y divide-ink/10 border-b border-ink/10">
+        <ul className="divide-y divide-ink/20 border-b border-ink/20">
           {saved.map(({ provider, key }) => (
             <Variable
               key={provider}

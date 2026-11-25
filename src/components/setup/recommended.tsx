@@ -13,7 +13,7 @@ export function Recommended({ isJudge }: { isJudge: boolean }) {
   return (
     <section
       aria-labelledby="recommended-title"
-      className="mt-14 border-t border-ink/12 pt-8"
+      className="mt-14 border-t border-ink/20 pt-8"
     >
       <h2 id="recommended-title" className="text-[15px] font-medium text-ink">
         Recommended connections
@@ -27,7 +27,7 @@ export function Recommended({ isJudge }: { isJudge: boolean }) {
         {ITEMS.map((item) => (
           <li
             key={item.id}
-            className="flex items-center gap-3 border-b border-ink/8 py-3"
+            className="flex items-center gap-3 border-b border-ink/18 py-3"
           >
             <Brand id={item.id} size={22} />
             <span className="min-w-0 flex-1 text-[13px]">

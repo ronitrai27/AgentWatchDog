@@ -100,7 +100,7 @@ function Step({
   return (
     <li className="relative grid grid-cols-[20px_minmax(0,1fr)] gap-x-4">
       {!last && (
-        <span className="absolute -bottom-3.5 left-[9.25px] top-3.5 w-[1.5px] bg-ink/15">
+        <span className="absolute -bottom-3.5 left-[9.25px] top-3.5 w-[1.5px] bg-ink/25">
           <span
             className="setup-rail absolute inset-0 bg-[#2f7d4f]"
             data-done={done}

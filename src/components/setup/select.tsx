@@ -235,7 +235,7 @@ export function Select({
             aria-activedescendant={`${id}-${active}`}
             autoComplete="off"
             spellCheck={false}
-            className="h-9 w-full shrink-0 border-b border-ink/10 bg-transparent px-3 text-[13px] text-ink outline-none placeholder:text-ink-muted"
+            className="h-9 w-full shrink-0 border-b border-ink/20 bg-transparent px-3 text-[13px] text-ink outline-none placeholder:text-ink-muted"
           />
         )}
         <div
@@ -259,7 +259,7 @@ export function Select({
             <div key={option.value}>
               {option.group && option.group !== shown[index - 1]?.group && (
                 <p
-                  className={`px-2 pb-1 text-xs text-ink-muted ${index > 0 ? "mt-1 border-t border-ink/8 pt-2" : "pt-1"}`}
+                  className={`px-2 pb-1 text-xs text-ink-muted ${index > 0 ? "mt-1 border-t border-ink/18 pt-2" : "pt-1"}`}
                 >
                   {option.group}
                 </p>
@@ -304,7 +304,7 @@ export function Select({
           ))}
         </div>
         {footer && (
-          <div className="shrink-0 border-t border-ink/10 p-1">{footer}</div>
+          <div className="shrink-0 border-t border-ink/20 p-1">{footer}</div>
         )}
       </div>
     </div>

@@ -33,7 +33,7 @@ function Chip({ connection: c }: { connection: Connection }) {
     <li className="shrink-0 list-none">
       <Badge
         variant="outline"
-        className="h-9 gap-2 border-ink/15 bg-mist-50 pr-1 pl-2.5 text-[13px] font-medium text-foreground"
+        className="h-9 gap-2 border-ink/25 bg-mist-50 pr-1 pl-2.5 text-[13px] font-medium text-foreground"
       >
         {LOGOS.has(c.id) && <Brand id={c.id as BrandId} size={18} />}
         {c.name}

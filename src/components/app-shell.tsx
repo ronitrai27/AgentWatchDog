@@ -106,7 +106,6 @@ const NAV: Item[] = [
     icon: glyph(
       "M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1",
     ),
-    soon: true,
   },
   {
     label: "Audit log",
@@ -138,7 +137,9 @@ function NavLink({
       onClick={onNavigate}
       aria-current={current ? "page" : undefined}
       className={`flex h-8 items-center gap-2.5 rounded-md px-2 text-sm font-semibold text-black transition-colors ${
-        current ? "bg-ink/8" : "hover:bg-ink/6"
+        current
+          ? "border bg-linear-to-r from-white to-green-800/40"
+          : "hover:bg-ink/6"
       }`}
     >
       {item.icon}
@@ -158,7 +159,7 @@ function Sidebar({
 }) {
   return (
     <div className="flex h-full flex-col">
-      <div className="flex h-14 items-center border-b border-ink/10 px-2">
+      <div className="flex h-14 items-center border-b border-ink/20 px-2">
         <ModeButton isJudge={user.isJudge} />
       </div>
 
@@ -190,7 +191,7 @@ function Sidebar({
         <NavLink item={SETTINGS} onNavigate={onNavigate} />
       </nav>
 
-      <div className="flex items-center gap-2.5 border-t border-ink/30 bg-neutral-100 px-4 py-3">
+      <div className="flex items-center gap-2.5 border-t border-ink/30  px-4 py-3">
         <UserAvatar src={user.avatar} name={user.name} size={32} />
         <div className="min-w-0">
           <p className="truncate text-[13px] font-medium text-ink">
@@ -240,7 +241,7 @@ export function AppShell({
   return (
     <div className="min-h-svh bg-paper [--paper:#f8f9f6] md:flex">
       {/* Desktop sidebar */}
-      <aside className="sticky top-0 hidden h-svh w-60 shrink-0 border-r border-ink/10 bg-white md:block">
+      <aside className="sticky top-0 hidden h-svh w-60 shrink-0 border-r border-ink/20 bg-white md:block">
         <Sidebar user={user} repo={repo} />
       </aside>
 
@@ -253,7 +254,7 @@ export function AppShell({
             onClick={() => setOpen(false)}
             className="absolute inset-0 bg-ink/40"
           />
-          <aside className="absolute inset-y-0 left-0 w-64 border-r border-ink/10 bg-paper shadow-xl">
+          <aside className="absolute inset-y-0 left-0 w-64 border-r border-ink/20 bg-paper shadow-xl">
             <Sidebar
               user={user}
               repo={repo}
@@ -264,7 +265,7 @@ export function AppShell({
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-ink/10 bg-white px-4 backdrop-blur sm:px-5">
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-ink/20 bg-white px-4 backdrop-blur sm:px-5">
           <div className="flex items-center gap-2.5">
             <button
               type="button"

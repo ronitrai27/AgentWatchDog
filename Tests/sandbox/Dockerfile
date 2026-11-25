@@ -66,13 +66,13 @@ RUN find /opt/rules/registry -type f \( -name '*.yaml' -o -name '*.yml' \) \
 # Mount points owned by the sandbox user, so a new volume mounted there is writable by it.
 RUN chmod -R a+rX /opt \
  && useradd --uid 10001 --create-home sandbox \
- && mkdir -p /src /work /out /cache \
- && chown 10001:10001 /src /work /out /cache \
+ && mkdir -p /src /work /base /agent /verify /out /cache \
+ && chown 10001:10001 /src /work /base /agent /verify /out /cache \
  && printf 'gitleaks %s\nosv-scanner %s\ntrivy %s\nk6 %s\ntoxiproxy %s\nsemgrep %s\nschemathesis %s\nstryker %s\nsemgrep-rules %s\n' \
     $GITLEAKS $OSV $TRIVY $K6 $TOXIPROXY $SEMGREP $SCHEMATHESIS $STRYKER $SEMGREP_RULES > /opt/versions.txt
 
 # The egress proxy for the dependency install (the only step allowed to reach a registry).
-COPY egress-proxy.mjs chaos.mjs /opt/rox/
+COPY egress-proxy.mjs chaos.mjs tools.mjs /opt/rox/
 
 USER 10001
 WORKDIR /src

@@ -1,3 +1,7 @@
 # Run traces, reports and the repository cache are local test output.
 runs/
 .cache/
+
+# dependencies
+/node_modules
+/.cache

@@ -50,14 +50,14 @@
 
   .btn-secondary {
     background: #fff;
-    border-color: rgb(43 58 48 / 0.2);
+    border-color: rgb(43 58 48 / 0.28);
     color: var(--ink);
     box-shadow: 0 1px 1px rgb(43 58 48 / 0.06);
   }
 
   .btn-secondary:hover:not(:disabled) {
     background: #f7f8f5;
-    border-color: rgb(43 58 48 / 0.26);
+    border-color: rgb(43 58 48 / 0.36);
   }
 
   .btn-quiet {
@@ -69,7 +69,7 @@
   }
 
   .field {
-    border: 1px solid rgb(43 58 48 / 0.18);
+    border: 1px solid rgb(43 58 48 / 0.28);
     border-radius: 6px;
     background: #fff;
     color: var(--ink);
@@ -79,7 +79,7 @@
   }
 
   .field:hover {
-    border-color: rgb(43 58 48 / 0.34);
+    border-color: rgb(43 58 48 / 0.42);
   }
 
   .field:focus-visible,
@@ -99,7 +99,7 @@
     position: fixed;
     inset: auto;
     margin: 0;
-    border: 1px solid rgb(43 58 48 / 0.16);
+    border: 1px solid rgb(43 58 48 / 0.26);
     border-radius: 8px;
     background: #fff;
     box-shadow:

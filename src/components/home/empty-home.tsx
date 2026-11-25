@@ -178,14 +178,14 @@ export function EmptyHome({
         variants={PAGE}
         initial="hidden"
         animate="shown"
-        className="-mt-8 sm:-mt-12 -mb-24 sm:-mb-28 flex h-[calc(100svh-3.5rem)] min-h-[34rem] flex-col pb-5"
+        className="-mt-8 sm:-mt-12 -mb-24 sm:-mb-28 flex h-[calc(100svh-3.5rem)] min-h-136 flex-col pb-5"
       >
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto [scrollbar-width:none]">
           <motion.div variants={PAGE} className="my-auto py-8">
             <div className="flex flex-col items-center text-center">
               <motion.h2
                 variants={RISE}
-                className="font-rox text-[36px] font-semibold leading-tight tracking-tight text-ink"
+                className="font-rox text-5xl font-semibold leading-tight tracking-tight text-ink"
               >
                 Welcome, {name}!
               </motion.h2>
@@ -201,23 +201,23 @@ export function EmptyHome({
 
             <motion.div
               variants={RISE}
-              className="mx-auto mt-12 flex max-w-[760px] items-baseline justify-between gap-6"
+              className="mx-auto mt-12 flex max-w-5xl items-baseline justify-between gap-6"
             >
               <h3 className="font-rox text-[14px] font-medium text-ink">
                 Quick Insights
               </h3>
               <p
-                className="max-w-[45%] truncate text-[12px] text-ink-soft"
+                className="max-w-[45%] truncate text-[12px] text-green-700"
                 title={setup.repo ?? undefined}
               >
-                For Repo - {repo}
+                Repo - {repo}
               </p>
             </motion.div>
 
             <motion.ul
               variants={PAGE}
               aria-label="Quick Insights"
-              className="mx-auto mt-4 grid max-w-[760px] gap-x-6 gap-y-5 p-0 sm:grid-cols-2 lg:grid-cols-3"
+              className="mx-auto mt-4 grid max-w-5xl gap-x-6 gap-y-5 p-0 sm:grid-cols-2 lg:grid-cols-3"
             >
               <Box
                 title="Commits"
@@ -301,7 +301,7 @@ export function EmptyHome({
                 <Connectors github={insights?.github} />
                 <Link
                   href="/home/settings?tab=agent"
-                  className="focusable flex h-8 items-center gap-2 rounded-full border border-ink/15 bg-white px-3 text-[13px] font-medium text-ink hover:border-ink/35"
+                  className="focusable flex h-8 items-center gap-2 rounded-full border border-ink/25 bg-neutral-100 px-3 text-[13px] font-medium text-ink hover:border-ink/40"
                 >
                   Config
                   <Settings2Icon aria-hidden="true" className="size-4" />

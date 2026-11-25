@@ -70,7 +70,20 @@ export type RunInput = {
   head: string;
   base: string | null;
   pr: number | null;
+  /** "fast" leaves out the slow, rarely decisive checks; see Task.md. */
+  profile?: "fast" | "full";
 };
+
+/** Only run with the full profile (nightly). */
+const SLOW = new Set<CheckId>([
+  "replay",
+  "flaky",
+  "mutation",
+  "k6",
+  "perf-compare",
+  "toxiproxy",
+  "schemathesis",
+]);
 
 export type Installed = { head: boolean; base: boolean; summary: string };
 
@@ -119,7 +132,11 @@ function mutationTargets(f: Facts): Map<string, string[]> {
 }
 
 /** Which checks apply to this repository, and why the others do not. */
-export function planChecks(f: Facts, hasBase: boolean): PlanItem[] {
+export function planChecks(
+  f: Facts,
+  hasBase: boolean,
+  profile: "fast" | "full" = "full",
+): PlanItem[] {
   const item = (
     id: CheckId,
     title: string,
@@ -144,7 +161,7 @@ export function planChecks(f: Facts, hasBase: boolean): PlanItem[] {
   const tests = f.vitest || Boolean(f.scripts.test);
   const app = f.stage !== null;
   const mutable = mutationTargets(f).size > 0;
-  return [
+  const all = [
     item(
       "lint",
       `Lint (${linter || "none"})`,
@@ -256,6 +273,13 @@ export function planChecks(f: Facts, hasBase: boolean): PlanItem[] {
         : "no OpenAPI spec in the repository or the lab fixtures",
     ),
   ];
+  return profile === "full"
+    ? all
+    : all.map((p) =>
+        SLOW.has(p.id) && p.applies
+          ? { ...p, applies: false, why: "left out of the fast profile" }
+          : p,
+      );
 }
 
 // --- static checks: a single command each
@@ -1162,9 +1186,11 @@ export async function install(
     GIT_CONFIG_VALUE_0: "*",
   };
   const ci = "npm ci --ignore-scripts --no-audit --no-fund --loglevel=error";
-  const stryker = facts.vitest
-    ? ` && npm install --no-save --ignore-scripts --no-audit --no-fund --loglevel=error @stryker-mutator/core@${STRYKER} @stryker-mutator/vitest-runner@${STRYKER}`
-    : "";
+  const full = input.profile !== "fast";
+  const stryker =
+    full && facts.vitest
+      ? ` && npm install --no-save --ignore-scripts --no-audit --no-fund --loglevel=error @stryker-mutator/core@${STRYKER} @stryker-mutator/vitest-runner@${STRYKER}`
+      : "";
   const mounts = (target: Mount): Mount[] => [
     { volume: v.src, at: "/src", readOnly: true },
     target,
@@ -1181,19 +1207,20 @@ export async function install(
     env,
     signal,
   });
-  const baseRun = input.base
-    ? await sandbox({
-        name: `rox-${input.run}-install-base`,
-        run: input.run,
-        script: `cp -a /src/. /base/ && cd /base && git -c advice.detachedHead=false checkout -q -f ${input.base} && ${ci} && echo installed`,
-        mounts: mounts({ volume: v.base, at: "/base", readOnly: false }),
-        network: { name: net },
-        workdir: "/base",
-        timeoutMs: 15 * 60_000,
-        env,
-        signal,
-      })
-    : null;
+  const baseRun =
+    full && input.base
+      ? await sandbox({
+          name: `rox-${input.run}-install-base`,
+          run: input.run,
+          script: `cp -a /src/. /base/ && cd /base && git -c advice.detachedHead=false checkout -q -f ${input.base} && ${ci} && echo installed`,
+          mounts: mounts({ volume: v.base, at: "/base", readOnly: false }),
+          network: { name: net },
+          workdir: "/base",
+          timeoutMs: 15 * 60_000,
+          env,
+          signal,
+        })
+      : null;
 
   const log = await serviceLogs(egress, 2000);
   await stopService(egress);
@@ -1233,7 +1260,7 @@ export async function install(
         ? baseOk
           ? "base installed"
           : `base install failed: ${why(baseRun)}`
-        : "no base commit",
+        : "base not needed",
       `registry calls through the proxy: ${decisions.length - denied.length} allowed, ${denied.length} denied`,
     ].join("; "),
   };
