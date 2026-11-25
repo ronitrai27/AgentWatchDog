@@ -17,6 +17,8 @@
     "temporal:dev": "node scripts/temporal-dev.mjs",
     "temporal:worker": "pnpm --dir agent run worker",
     "temporal:hello": "pnpm --dir agent run hello",
+    "webhooks:dev": "node scripts/webhook-forward.mjs",
+    "webhooks:test": "node scripts/webhook-test.mjs",
     "agent:test": "pnpm --dir agent run test"
   },
   "dependencies": {
@@ -43,6 +45,7 @@
     "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "smee-client": "^5.0.0",
     "tailwindcss": "4.3.3",
     "typescript": "^5"
   },

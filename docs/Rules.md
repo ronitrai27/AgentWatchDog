@@ -43,31 +43,31 @@ Every single tool below is free, open-source, industry-standard, runs 100% offli
 A basic API test, smoke test, lint or a single npm audit is what any agent produces in one prompt. What stands out is evidence that a fix is correct and didn’t hurt anything else, using methods that are hard to fake. These are the ones I’d name:
 
 Correctness beyond “the test passes”
-Technique	Tool	Why it impresses
-Mutation testing	Stryker (JS/TS)	Proves the agent’s new test really catches the bug: mutate the fix, the test must fail. This kills the “weak or fake test” problem.
-Property-based testing	fast-check	Generates thousands of inputs around the bug, not three hand-picked ones.
-Differential testing	Replay recorded production requests against the old and new build	Shows behaviour changed only where intended.
-Contract and schema drift	Schemathesis or Dredd on the OpenAPI spec, plus breaking-change diff (oasdiff)	Catches API breaks the unit tests miss.
-Flake quarantine	Run the repro test N times	A fix proven stable, not lucky.
+Technique Tool Why it impresses
+Mutation testing Stryker (JS/TS) Proves the agent’s new test really catches the bug: mutate the fix, the test must fail. This kills the “weak or fake test” problem.
+Property-based testing fast-check Generates thousands of inputs around the bug, not three hand-picked ones.
+Differential testing Replay recorded production requests against the old and new build Shows behaviour changed only where intended.
+Contract and schema drift Schemathesis or Dredd on the OpenAPI spec, plus breaking-change diff (oasdiff) Catches API breaks the unit tests miss.
+Flake quarantine Run the repro test N times A fix proven stable, not lucky.
 Performance and resilience (k6, owned and committed)
-Test	What it shows
-Before/after p95 and p99 comparison with thresholds	No performance regression, as exit-code gates
-Spike and breakpoint test	Where the service falls over, relevant for traffic-alert incidents
-Soak test with memory trend	Leaks introduced by the fix
-Chaos on dependencies (Toxiproxy: latency, timeouts, dropped DB)	Fix survives a slow or dead dependency
-Rate-limit and abuse test	Burst, oversized body, slow-loris style input
+Test What it shows
+Before/after p95 and p99 comparison with thresholds No performance regression, as exit-code gates
+Spike and breakpoint test Where the service falls over, relevant for traffic-alert incidents
+Soak test with memory trend Leaks introduced by the fix
+Chaos on dependencies (Toxiproxy: latency, timeouts, dropped DB) Fix survives a slow or dead dependency
+Rate-limit and abuse test Burst, oversized body, slow-loris style input
 Security, the way a security team layers it
-Layer	Tool	Enterprise-grade detail
-SAST with custom rules	Semgrep with org rules plus taint tracking, and CodeQL	Custom rules for the exact bug class just fixed, so it can’t recur
-Secrets in history	Gitleaks and TruffleHog (verified-only mode)	Verifies keys are live, fewer false alarms
-SCA with reachability	OSV-Scanner plus a reachability check	Flags only vulnerabilities your code actually calls
-Container and IaC	Trivy, Checkov	CIS-style config findings
-DAST, authenticated	OWASP ZAP with an auth script and the OpenAPI spec	Tests logged-in routes, not just the landing page
-API security fuzzing	Schemathesis, RESTler	Finds 5xx, broken auth and mass-assignment
-Authorization testing (BOLA/IDOR)	Own test matrix: user A requesting user B’s objects, role escalation	The top real-world API flaw, and the one agents often miss
-Supply-chain integrity	Lockfile diff gate, npm audit signatures, block new install scripts, pinned GitHub Action SHAs	Defends against package takeover
-SBOM and provenance	Syft (CycloneDX) and a signed attestation (cosign, SLSA-style)	Auditors ask for exactly this
-Prompt-injection suite	Your trap pack, plus garak-style probes	Proves the agent itself is safe
+Layer Tool Enterprise-grade detail
+SAST with custom rules Semgrep with org rules plus taint tracking, and CodeQL Custom rules for the exact bug class just fixed, so it can’t recur
+Secrets in history Gitleaks and TruffleHog (verified-only mode) Verifies keys are live, fewer false alarms
+SCA with reachability OSV-Scanner plus a reachability check Flags only vulnerabilities your code actually calls
+Container and IaC Trivy, Checkov CIS-style config findings
+DAST, authenticated OWASP ZAP with an auth script and the OpenAPI spec Tests logged-in routes, not just the landing page
+API security fuzzing Schemathesis, RESTler Finds 5xx, broken auth and mass-assignment
+Authorization testing (BOLA/IDOR) Own test matrix: user A requesting user B’s objects, role escalation The top real-world API flaw, and the one agents often miss
+Supply-chain integrity Lockfile diff gate, npm audit signatures, block new install scripts, pinned GitHub Action SHAs Defends against package takeover
+SBOM and provenance Syft (CycloneDX) and a signed attestation (cosign, SLSA-style) Auditors ask for exactly this
+Prompt-injection suite Your trap pack, plus garak-style probes Proves the agent itself is safe
 Gate design that impresses (more than the tools)
 Baseline diff: block only on new findings.
 Severity policy as code: committed file, auditable.
@@ -77,7 +77,6 @@ Scanner versions pinned, rule databases baked into the image, so a run is reprod
 ================================================================================
 
 covers GitHub events only (failed checks, pushes, PR outcomes). Sentry, Vercel and Datadog alerts still need their own webhook URL pointed at Rox. In Judge Mode those alerts are simulated, so judges won’t need them.
-
 
 How it closes the loop
 
@@ -93,3 +92,5 @@ Code enforces the limits: no merge or push tool, protected files, cost limit, th
 It stops honestly and says why, with evidence.
 It stays quiet unless there is a PR, a question or a failure.
 Everything can be replayed, and one click kills a run.
+
+Does the webhook need the Temporal worker? No. It only needs the Temporal server and a client to start the workflow. The worker is a separate process that runs the steps: build, k6, scans, edits. If it crashes or you refresh the page, Temporal resumes from the last finished step. The chat agent is never blocked.
