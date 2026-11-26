@@ -3,6 +3,7 @@
 import { MemorySaver } from "@langchain/langgraph";
 import { readEvents } from "../events";
 import { CASES } from "./cases";
+import type { Answer, Decide, Question } from "./decisions";
 import type { AgentLike, Agents } from "./graph";
 import { startCase } from "./lab-run";
 import { type FixResult, runFix } from "./run";
@@ -64,6 +65,81 @@ const WRONG = async (ctx: AgentContext) => {
     title: "fix: cursor",
   };
 };
+const NO_COMPILE = async (ctx: AgentContext) => {
+  await edit(ctx, "items.at(-1)?.nope");
+  return {
+    outcome: "fixed",
+    summary: "Cursor from items.",
+    title: "fix: cursor",
+  };
+};
+
+// ---- Scripted Decisions API: answers by question set, numbered per set ----
+type Answers = Record<string, number | string>;
+type DecisionScript = {
+  judge?: (n: number) => Answers;
+  route?: (n: number) => Answers;
+  scan?: (input: string) => Answers;
+};
+/** Unsure, so the scripted written Judge decides; the old route; nothing injected. */
+const UNSURE = {
+  hides_symptom: 0.5,
+  weakens_security: 0,
+  breaks_callers: 0,
+  unrelated_edits: 0,
+  fix_quality: 0.5,
+};
+const CLEAN = {
+  hides_symptom: 0,
+  weakens_security: 0,
+  breaks_callers: 0,
+  unrelated_edits: 0,
+  fix_quality: 1,
+};
+const route = (v: string, p = 0.95) => ({ next_step: v, p });
+const scripted_decide =
+  (s: DecisionScript, calls: Record<string, number>): Decide =>
+  async (input: string, questions: Question[]) => {
+    const set =
+      questions[0]?.name === "next_step"
+        ? "route"
+        : questions[0]?.name === "hides_symptom"
+          ? "judge"
+          : questions[0]?.name === "prompt_injection"
+            ? "scan"
+            : "gates";
+    const n = (calls[`decide.${set}`] ?? 0) + 1;
+    calls[`decide.${set}`] = n;
+    const a: Answers =
+      set === "judge"
+        ? (s.judge?.(n) ?? UNSURE)
+        : set === "route"
+          ? (s.route?.(n) ?? route("reinvestigate_new_cause"))
+          : set === "scan"
+            ? (s.scan?.(input) ?? { prompt_injection: 0 })
+            : {};
+    const answers: Record<string, Answer> = {};
+    for (const q of questions) {
+      const v = a[q.name];
+      if (v === undefined) continue;
+      answers[q.name] =
+        q.type === "choice"
+          ? {
+              type: "choice",
+              name: q.name,
+              choice: String(v),
+              confidence: 0.9,
+              probabilities: [
+                { value: String(v), probability: Number(a.p ?? 0.95) },
+              ],
+            }
+          : q.type === "score"
+            ? { type: "score", name: q.name, score: Number(v), confidence: 0.9 }
+            : { type: "predicate", name: q.name, probability: Number(v) };
+    }
+    return { answers, ms: 1, inputTokens: 0 };
+  };
+
 const ACCEPT = { accept: true, reason: "Small and correct." };
 const REJECT = { accept: false, reason: "Rejected on purpose by the proof." };
 
@@ -73,6 +149,7 @@ type Scenario = {
   limitUsd?: number;
   real?: boolean;
   agents?: (calls: Record<string, number>) => Agents;
+  decisions?: DecisionScript;
   expect: (
     r: FixResult,
     calls: Record<string, number>,
@@ -160,6 +237,93 @@ const SCENARIOS: Scenario[] = [
         : `${r.outcome}, ${r.attempts.map((a) => a.by).join(", ")}`,
   },
   {
+    name: "router: a compile error keeps the cause, fix again",
+    agents: agents(
+      () => RIGHT_CAUSE,
+      (ctx, n) => (n === 1 ? NO_COMPILE(ctx) : RIGHT(ctx)),
+      () => ACCEPT,
+    ),
+    decisions: { route: () => route("retry_fix_same_cause") },
+    expect: (r, c) =>
+      r.outcome === "fixed" &&
+      r.attempts.length === 2 &&
+      r.attempts[0]?.by?.startsWith("Verify") &&
+      c.investigator === 1
+        ? null
+        : `${r.outcome}, ${r.attempts.length} attempts, first by ${r.attempts[0]?.by}, ${c.investigator} investigations`,
+  },
+  {
+    name: "router: a fix in a protected place stops after one attempt",
+    agents: agents(
+      () => RIGHT_CAUSE,
+      () => ({
+        outcome: "give_up",
+        summary: "The fix is in migrations/, which may not be changed.",
+      }),
+      () => ACCEPT,
+    ),
+    decisions: { route: () => route("stop_unfixable", 0.9) },
+    expect: (r, c) =>
+      r.outcome === "gave_up" && r.attempts.length === 1 && c.engineer === 1
+        ? null
+        : `${r.outcome}, ${r.attempts.length} attempts, ${c.engineer} fixes`,
+  },
+  {
+    name: "router: an unsure stop is not trusted, the old route is taken",
+    agents: agents(
+      () => RIGHT_CAUSE,
+      (ctx, n) => (n === 1 ? WRONG(ctx) : RIGHT(ctx)),
+      () => ACCEPT,
+    ),
+    decisions: { route: () => route("stop_unfixable", 0.7) },
+    expect: (r, c) =>
+      r.outcome === "fixed" && c.investigator === 2
+        ? null
+        : `${r.outcome}, ${c.investigator} investigations`,
+  },
+  {
+    name: "decision Judge rejects, then accepts, no written review",
+    agents: agents(
+      () => RIGHT_CAUSE,
+      RIGHT,
+      () => REJECT,
+    ),
+    decisions: {
+      judge: (n) =>
+        n === 1 ? { ...CLEAN, hides_symptom: 0.95, fix_quality: 0.1 } : CLEAN,
+      route: () => route("retry_fix_same_cause"),
+    },
+    expect: (r, c) =>
+      r.outcome === "fixed" && r.attempts[0]?.by === "the Judge" && !c.judge
+        ? null
+        : `${r.outcome}, first by ${r.attempts[0]?.by}, ${c.judge ?? 0} written reviews`,
+  },
+  {
+    name: "injected text is flagged and reported, the bug is still fixed",
+    agents: agents(
+      () => RIGHT_CAUSE,
+      RIGHT,
+      () => ACCEPT,
+    ),
+    decisions: {
+      scan: (input): Answers =>
+        /AssertionError|fails/.test(input)
+          ? {
+              prompt_injection: 0.97,
+              asks_skip_checks: 0.9,
+              asks_reveal_secrets: 0.8,
+              asks_push_or_merge: 0.1,
+              asks_approve: 0,
+            }
+          : { prompt_injection: 0.01 },
+      judge: () => CLEAN,
+    },
+    expect: (r, _c, kinds) =>
+      r.outcome === "fixed" && kinds.includes("security.injection_flagged")
+        ? null
+        : `${r.outcome}, flagged: ${kinds.includes("security.injection_flagged")}`,
+  },
+  {
     name: "the budget stops the real agents before any spend",
     real: true,
     limitUsd: 0,
@@ -191,6 +355,9 @@ async function main() {
         {
           checkpointer: new MemorySaver(),
           agents: s.real ? undefined : s.agents?.(calls),
+          decide: s.real
+            ? undefined
+            : scripted_decide(s.decisions ?? {}, calls),
           limitUsd: s.limitUsd,
         },
       );

@@ -91,7 +91,7 @@ export async function tidy(ws: Workspace, files: string[]): Promise<void> {
 export type Group = "guard" | "security" | "quality" | "tests" | "performance";
 
 /** A check that finds a problem but does not block the fix (shown with a warning). */
-export type ServiceGates = (files: string[]) => Promise<Gate[]>;
+export type ServiceGates = (files: string[], patch: string) => Promise<Gate[]>;
 
 const SOURCE_ONLY =
   "the fix may only change source files, so no dependency, Dockerfile or config file changed (enforced by the rules)";
@@ -252,7 +252,7 @@ export async function verify(
     // k6, the comparison with the code before the fix, Toxiproxy and Schemathesis.
     async () => {
       const found = services
-        ? await services(facts.files)
+        ? await services(facts.files, patch)
         : [
             "k6 (smoke and load)",
             "Performance against the base",

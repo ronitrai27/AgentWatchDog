@@ -14,6 +14,12 @@ import {
   type SavedKey,
 } from "@/lib/models";
 import { checkProviderKey } from "@/lib/provider-check";
+import {
+  checkSlack,
+  removeReportConnection,
+  type SlackCheck,
+  saveSlackConnection,
+} from "@/lib/report-connections";
 import { getSession } from "@/lib/session";
 import { listRepos } from "@/lib/setup";
 import { recordAudit } from "@/lib/users";
@@ -289,5 +295,64 @@ export async function saveAgentConfig(input: AgentConfig): Promise<Result> {
     instructionsLength: instructions.length,
   });
   refresh();
+  return { ok: true };
+}
+
+// ---------- Report connections (Slack now, Telegram later) ----------
+
+/** Checks the Slack tokens in .env against Slack. Returns no token, only what they can do. */
+export async function checkSlackConnection(): Promise<
+  Result<{ check: SlackCheck }>
+> {
+  const session = await getSession();
+  if (!session) return SIGNED_OUT;
+  return { ok: true, check: await checkSlack() };
+}
+
+/** Connects Slack: checks the token again and saves the channel the report goes to. */
+export async function connectSlack(channelId: string): Promise<Result> {
+  const session = await getSession();
+  if (!session) return SIGNED_OUT;
+  const check = await checkSlack();
+  if (!check.ready)
+    return { ok: false, error: check.error ?? "Slack is not ready." };
+  // The channel must be one the bot is really in; the browser's word is not enough.
+  const channel = check.channels.find((c) => c.id === channelId);
+  if (!channel)
+    return {
+      ok: false,
+      error: "Rox is not in that channel. Invite @rox to it in Slack first.",
+    };
+  try {
+    await saveSlackConnection(session.uid, {
+      workspace: check.workspace,
+      workspaceId: check.workspaceId,
+      botUser: check.botUser,
+      channelId: channel.id,
+      channelName: channel.name,
+    });
+  } catch {
+    return NOT_SAVED;
+  }
+  await audit(session.uid, "connection.slack", {
+    workspace: check.workspace,
+    channel: channel.name,
+  });
+  revalidatePath("/home/connections");
+  return { ok: true };
+}
+
+export async function disconnectReport(provider: string): Promise<Result> {
+  const session = await getSession();
+  if (!session) return SIGNED_OUT;
+  if (provider !== "slack" && provider !== "telegram")
+    return { ok: false, error: "Unknown app." };
+  try {
+    await removeReportConnection(session.uid, provider);
+  } catch {
+    return NOT_SAVED;
+  }
+  await audit(session.uid, "connection.removed", { provider });
+  revalidatePath("/home/connections");
   return { ok: true };
 }

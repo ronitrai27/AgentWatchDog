@@ -13,7 +13,7 @@ import type { FixResult } from "../../Tests/src/agent/run";
 import type { CheckResult } from "../../Tests/src/checks";
 // Only types are imported: workflow code runs in Temporal's deterministic sandbox.
 import type * as activities from "./activities";
-import type { LabInput } from "./activities";
+import type { FixInput, LabInput } from "./activities";
 
 const steps = proxyActivities<typeof activities>({
   startToCloseTimeout: "30 minutes",
@@ -39,6 +39,8 @@ export type LabStart = Omit<LabInput, "run" | "workflowId"> & {
   fix?: boolean;
   /** The pull request's branch: the agent's fix is proposed to it. */
   prBranch?: string;
+  /** Where the agent's final report goes. */
+  report?: FixInput["report"];
 };
 
 export async function labChecks(start: LabStart): Promise<CheckResult[]> {
@@ -83,6 +85,7 @@ export async function labChecks(start: LabStart): Promise<CheckResult[]> {
         workspaces: facts.workspaces,
         head: input.head,
         base: input.base,
+        report: start.report,
         ...(start.prBranch
           ? {
               publish: {

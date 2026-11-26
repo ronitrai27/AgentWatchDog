@@ -6,6 +6,8 @@ import {
   summarize,
   validSignature,
 } from "@/lib/github-webhook";
+import { reportTarget } from "@/lib/report-connections";
+import { startPrRun } from "@/lib/rox-runs";
 import { recordEvent, replacedBecause, short } from "@/lib/webhook-ledger";
 
 export const dynamic = "force-dynamic";
@@ -115,7 +117,45 @@ export async function POST(request: Request) {
   }
   console.log(`\n${lines.join("\n")}\n`);
 
-  // Answer at once. The work itself will run in the background, never in this request.
+  // A pull request into the default branch of a repository a Rox user chose: start the fix run
+  // in Temporal. Not awaited: the work runs in the background, never in this request.
+  if (verdict.trigger && verdict.kind === "pr_to_default" && userId && repo) {
+    const p = (
+      payload as {
+        pull_request?: {
+          number?: number;
+          title?: string;
+          head?: { sha?: string; ref?: string };
+          base?: { sha?: string };
+        };
+      }
+    ).pull_request;
+    if (p?.number && p.head?.sha && p.head.ref && p.base?.sha) {
+      const run = {
+        repo,
+        pr: p.number,
+        head: p.head.sha,
+        base: p.base.sha,
+        prBranch: p.head.ref,
+        title: p.title ?? null,
+      };
+      void reportTarget(userId)
+        .catch(() => null)
+        .then((report) => startPrRun({ ...run, report }))
+        .then(
+          (s) =>
+            console.log(
+              `[webhook] started Rox for PR #${run.pr}: ${s.workflowId} run ${s.runId}`,
+            ),
+          (error) =>
+            console.error(
+              `[webhook] could not start Rox for PR #${run.pr} (are Temporal and pnpm temporal:worker running?): ${error instanceof Error ? error.message : error}`,
+            ),
+        );
+    }
+  }
+
+  // Answer at once. The work itself runs in the background, never in this request.
   return NextResponse.json(
     {
       ok: true,

@@ -1012,13 +1012,24 @@ async function schemathesis(
   const problem = await stageReady(input, facts, ["head"], signal);
   if (problem)
     return { status: "error" as const, summary: problem, ms: 0, reports: [] };
+  // The same fuzzing on the code without the change, when it can run: only operations that fail
+  // on head but not on base count. An app's own older API problems are not the change's fault
+  // (the demo app has 6 to 7 of 11 operations with findings on main).
+  const withBase =
+    facts.stage !== null &&
+    (await stageReady(input, facts, ["base"], signal)) === null;
   const target = facts.stage?.services.find(
     (s) => s.name === facts.stage?.target,
   );
+  const fuzz = (side: "head" | "base", out: string) =>
+    `schemathesis run ${facts.openapi} --url http://${hostOf(facts, side)}:${target?.port} --checks all --max-time 90 --request-timeout 10 --workers 2 --report junit --report-junit-path /out/${item.id}/${out}.xml > /out/${item.id}/${out}.txt 2>&1`;
   const e = await execCheck(
     input,
     item.id,
-    `mkdir -p /out/${item.id}; schemathesis run ${facts.openapi} --url http://${hostOf(facts, "head")}:${target?.port} --checks all --max-time 90 --request-timeout 10 --workers 2 --report junit --report-junit-path /out/${item.id}/junit.xml > /out/${item.id}/output.txt 2>&1; ${tailOf(item.id)}`,
+    withBase
+      ? // Both at once; the exit code is head's.
+        `mkdir -p /out/${item.id}; (${fuzz("base", "base")}) & ${fuzz("head", "junit")}; code=$?; wait; cp /out/${item.id}/junit.txt /out/${item.id}/output.txt; ${tailOf(item.id)}; exit $code`
+      : `mkdir -p /out/${item.id}; ${fuzz("head", "junit")}; code=$?; cp /out/${item.id}/junit.txt /out/${item.id}/output.txt; ${tailOf(item.id)}; exit $code`,
     {
       mounts: clientMounts(input),
       network: { name: networks(input.run).stage },
@@ -1035,8 +1046,27 @@ async function schemathesis(
       ms: e.ms,
       reports: e.copied.files,
     };
-  const xml = e.copied.files.find((f) => f.endsWith(".xml"));
-  const c = xml ? junitCounts(await readRun(input.run, xml)) : null;
+  const xml = e.copied.files.find((f) => f.endsWith("/junit.xml"));
+  const headXml = xml ? await readRun(input.run, xml) : "";
+  const c = xml ? junitCounts(headXml) : null;
+  const baseFile = e.copied.files.find((f) => f.endsWith("/base.xml"));
+  if (withBase && c && baseFile) {
+    const before = new Set(failedCases(await readRun(input.run, baseFile)));
+    const added = failedCases(headXml).filter((op) => !before.has(op));
+    return {
+      status: added.length ? ("fail" as const) : ("pass" as const),
+      summary: added.length
+        ? `${added.length} API operation(s) have problems the change added: ${added.join(", ").slice(0, 300)}`
+        : `${c.tests} operations fuzzed; ${c.failed} with problems, all ${before.size ? "already on the code without the change" : "none"}`,
+      ms: e.ms,
+      reports: e.copied.files,
+      counts: {
+        operations: c.tests,
+        failed: added.length,
+        before: before.size,
+      },
+    };
+  }
   const problems = [
     ...new Set(
       e.output
@@ -1286,4 +1316,14 @@ export async function listReports(run: string): Promise<string[]> {
     for (const f of await readdir(path.join(dir, d)).catch(() => []))
       out.push(`${d}/${f}`);
   return out;
+}
+
+/** The names of the test cases that failed in a JUnit report (Schemathesis: one per operation). */
+function failedCases(xml: string): string[] {
+  const names: string[] = [];
+  for (const m of xml.matchAll(
+    /<testcase\b[^>]*\bname="([^"]*)"[^>]*?(?:\/>|>([\s\S]*?)<\/testcase>)/g,
+  ))
+    if (/<(failure|error)\b/.test(m[2] ?? "")) names.push(m[1] as string);
+  return names;
 }

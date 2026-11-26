@@ -54,7 +54,9 @@ export class Workspace {
     const copy = await sandbox({
       name: `${this.container}-copy`,
       run: this.run,
-      script: `cd /work && find . -name node_modules -type d -prune | sed 's#^./##' > /tmp/nm
+      // Build output is skipped: a build in the checks leaves .next/node_modules behind, and
+      // mounting it read-only made every later build fail with EROFS.
+      script: `cd /work && find . -name .next -prune -o -name node_modules -type d -prune -print | sed 's#^./##' > /tmp/nm
 if [ ! -f ${this.root}/.rox-ready ]; then
   find ${this.root} -mindepth 1 -delete 2>/dev/null
   tar -C /work --exclude=node_modules --exclude=.git --exclude=.next --exclude=.stryker-tmp -cf - . | tar -C ${this.root} -xf - && cd ${this.root} && (${prepare})   && while read -r d; do mkdir -p "$d"; done < /tmp/nm   && git init -q && git config user.email rox@localhost && git config user.name rox   && printf '.rox-ready

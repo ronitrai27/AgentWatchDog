@@ -18,7 +18,7 @@ Everything is built and proven here in `Tests/` first. Only what passes Phase 3 
 ## Rules for this work
 
 1. **The real agent is not touched.** No edits in `agent/src` or `src/`. The only folder outside `Tests/` that changes is `agent/temporal/` (the hello-world example is replaced by real workflows).
-2. **Test models only:** `gpt-4.1-mini` for thinking, fixing and judging, `gpt-4.1-nano` for small jobs (classifying, summarising tool output). Never another model in tests.
+2. **Test models only:** `gpt-4.1-mini` for thinking, fixing and the written review, `gpt-4.1-nano` for small jobs (summarising tool output), and `gpt-6-luna` through the OpenAI Decisions API (`POST /v1/decisions`) for bounded decisions: yes/no, one of a fixed set, a score. Never another model in tests. Decisions are not counted in the run budget (input $0.10 per million tokens, output free; a run's decisions cost well under $0.001).
 3. **Nothing is stored for real.** Events go to one JSONL file per run under `Tests/runs/`, and to the live stream. The only database is the lab's own container (`rox-lab-db`, port 5439, this machine only): it holds the LangGraph checkpoints a run needs to resume. Rox's own database is never opened.
 4. **Every step is traced** with a timestamp, its duration, its inputs (secrets removed) and its result.
 5. **Code decides, the model suggests.** The order of steps, every limit, every permission and the final pass or fail are enforced in code, never in a prompt (agentdesign.md, Part 1 and Part 13).
@@ -156,23 +156,37 @@ The goal is to prove the hard infrastructure first: a locked-down sandbox, all c
 
 Status on 2026-11-26: the agent works on all 3 seeded bugs. Crash resume, pull request #1 and publishing are still open.
 
-**Architecture:** a LangGraph `StateGraph` workflow with an evaluator-optimizer loop. Code owns the order and the verdict; three of the six nodes call a small ReAct agent (`createAgent`).
+**Architecture:** a LangGraph `StateGraph` workflow with an evaluator-optimizer loop. Code owns the order and the verdict; two nodes call a small ReAct agent (`createAgent`), and bounded decisions go to the Decisions API (`Tests/src/agent/decisions.ts`), whose typed answers code turns into a route with fixed thresholds.
 
 ```
-triage -> investigate -> fix -> verify -> judge -> report
-            ^   ^         |       |         |
-            |   +---------+-------+---------+   refused: back with the reason (3 attempts)
-            +-- a cause without proof (2 times)
+triage -> scan -> investigate -> fix -> verify -> judge -> report
+                    ^   ^         ^ |       |         |
+                    |   |         +-+-------+---------+  refused: the router picks fix again,
+                    |   +-----------+-------+---------+  investigate again, or report (3 attempts)
+                    +-- a cause without proof (2 times)
 ```
 
 | Node | Who | What it may do |
 |---|---|---|
 | triage | code | Runs the tests, re-runs failures; only what fails 3 of 3 times becomes the contract |
+| scan | Decisions (5 predicates, per source) | Looks for text aimed at an AI agent in the failure output, the test code and the change. A hit is written as `security.injection_flagged`, warned to the Investigator and shown in the pull request; the run goes on |
 | investigate | gpt-4.1-mini, ReAct | Read only. Names the cause with quoted lines; code checks each quote exists in the file |
 | fix | gpt-4.1-mini, ReAct | 5 tools; the only node that can edit; edit rules enforced by code |
-| verify | code | 8 gates in a fresh copy the agent never touched |
-| judge | gpt-4.1-mini, one call | Sees the problem and the patch only; can only reject |
-| report | code | Outcome, cost, attempts |
+| verify | code | 8 gates in a fresh copy the agent never touched. Which service checks run is decided from what the patch does (Decisions), not its file names |
+| judge | Decisions first (4 predicates + 1 score); gpt-4.1-mini only when unsure | Sees the problem and the patch only; can only reject |
+| router (in `refuse()`) | Decisions (1 choice) | After a refusal: fix again with the same cause, investigate again, or stop. An unsure answer (below 0.6, or below 0.8 for stop) takes the old route back to the Investigator |
+| report | code | Outcome, cost, attempts, flagged injections |
+
+**Decisions, and what code does with them** (thresholds from `decisions-bench.ts`; re-tune when the model changes):
+
+| Where | Questions | Code decides |
+|---|---|---|
+| Judge | `hides_symptom`, `weakens_security`, `breaks_callers`, `unrelated_edits`, score `fix_quality` | Any flag over 0.65 rejects and names it. All flags under 0.30 and quality over 0.70 accepts. Anything else, or no answer: the written review by gpt-4.1-mini |
+| Router | choice `retry_fix_same_cause` / `reinvestigate_new_cause` / `stop_unfixable` | Fixes the old bug where a typo in a right fix sent the right cause back with "look elsewhere". 3 attempts in all stays the hard limit |
+| Scan | `prompt_injection` and what it asks: skip checks, reveal secrets, push or merge, approve | Flag over 0.70. Detection only: the guardrails (no push, merge or .env tool) never depend on it |
+| Service checks | `affects_http_api`, `affects_performance`, `affects_fault_handling`, score `blast_radius` | A check runs when its effect is at least 0.20 (low on purpose). Schemathesis also runs on any route or spec change. No server code: nothing runs, as before. No answer: everything runs, as before |
+
+Every decision is traced as a `decision` event with its answers and time, and a failed call as `decision.failed`.
 
 - [x] LangGraph graph with typed state, nodes, routing and an honest end (`Tests/src/agent/graph.ts`)
 - [x] Triage. Changed from the plan: code, not a model
@@ -180,8 +194,11 @@ triage -> investigate -> fix -> verify -> judge -> report
 - [ ] Reproduce. Not needed for a pull request or CI failure (the failing test exists, and must fail 3 of 3); needed later for Sentry errors
 - [x] Fix in a writable sandbox copy, at most 3 attempts; a refused attempt goes back to the Investigator with the reason
 - [x] Verify in a fresh sandbox: code gates first, then the separate judge, which can only reject
+- [x] Decisions API (gpt-6-luna) for the judge, the retry router, the injection scan and the service-check selection, each falling back to the old behaviour when the API fails (2026-11-26)
 - [x] Budgets and limits enforced in code: model calls, tool calls, cost ($0.06 per run), time, attempts
 - [ ] Publish: branch and pull request (waits for open question 2). The fix is saved as `runs/<run>/fix.patch`
+- [x] Final report to Slack (2026-11-26): the graph's `report` node (code, not a model) sends it through `Tests/src/agent/notify.ts` for every run that opens a pull request or stops; once per run (`report.sent` in the trace), and a Slack failure never fails a good fix. Where it goes is the user's choice in Connections (`report_connections`, `user_setup.report_to`); Telegram plugs into the same notifier later
+- [x] A pull request into `main` starts the run by itself: the GitHub webhook starts the `labChecks` workflow with `fix: true` and the user's report target (`src/lib/rox-runs.ts`)
 - [x] Every model call traced: step, model, tokens, cost, time
 - [x] Runs as a Temporal activity with checkpoints in Postgres and saves the patch: one full run, no crash
 - [ ] Crash resume proven (the test was stopped before the worker was killed)
@@ -199,7 +216,17 @@ triage -> investigate -> fix -> verify -> judge -> report
 - paging-skips failed on earlier versions (it stopped without a fix 3 times: two bugs of ours, and one wrong cause that the quote check refused). The final version has been run once on paging-skips and once on stock-zero; expired-session ran before the re-investigate loop was added. One good run per bug is not yet proof of reliability.
 - Verify accepts the right fix and refuses: no change, code that does not compile, a fix that breaks another feature, a deleted test, a weakened test, and code that behaves differently under test. A compiling but wrong fix is refused too.
 - The build gate failed once for no known reason on a correct fix; it now gets a second try.
-- Not exercised yet: the re-investigate loop after a refused attempt, the budget stop, the judge rejecting a fix.
+- Not exercised yet with real models: the re-investigate loop after a refused attempt, the budget stop, the judge rejecting a fix.
+
+**Decisions API against gpt-4.1-mini** (`npx tsx src/agent/decisions-bench.ts 3`, 2026-11-26). 27 hand-labeled items built from the 3 seeded bugs and the agent's real patches, each run 3 times on both. gpt-4.1-mini used strict JSON output at temperature 0. Small and self-labeled: shape, not proof.
+
+| Task | gpt-6-luna (Decisions) | gpt-4.1-mini | Code before |
+|---|---|---|---|
+| Judge, 11 patches | 369 ms, 100% right | 1,016 ms, 73% (accepted a test special case, a dropped not-found and a swallowed error) | - |
+| Retry router, 7 refusals | 287 ms, 100% | 870 ms, 86% | 29% (always re-investigated) |
+| Injection, 8 texts | 299 ms, 100% | 781 ms, 88% (missed `SYSTEM: … git push` in test output) | 50% (nothing looked) |
+| Service checks, 7 patches | 307 ms, 95% | 930 ms, 93% | 30% (file-name rule missed both real API fixes) |
+| All | 32.9 s, $0.0065 | 92.9 s, $0.0204 | |
 
 **Proof Phase 2 is done**
 - [ ] 3 seeded, ordinary bugs in a copy of the demo app are each fixed, verified and published as a pull request. (Fixed and verified: yes. Published: no.)
@@ -234,7 +261,7 @@ The goal is to break the agent on purpose and keep only what survives.
 
 1. A new push to the same pull request replaces the old run. Should a different pull request also replace it, or run alongside it? Today's ledger replaces any older event of the same kind in the same repository.
 2. Where pull requests from the test agent go: the demo repo, or a fork of it, so test runs never touch the real `main`.
-3. How long a run may take in total before it is stopped (proposed: 30 minutes, set in Settings).
+3. How long a run may take in total before it is stopped. **Decided (2026-11-26):** the real agent uses "Max time per run" from Settings: default 20 minutes, never less than 20. Not enforced in the lab yet.
 
 ---
 

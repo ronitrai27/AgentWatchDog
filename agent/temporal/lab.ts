@@ -5,7 +5,8 @@
 //   pnpm lab start --ref main --base <sha> [--repo owner/name] [--wait]
 //   pnpm lab cancel --pr 1 [--repo owner/name]
 //   pnpm lab case <seeded bug> [--publish] [--wait]
-// Add --fix to start to let the agent fix what failed, --full for the slow checks.
+// Add --fix to start to let the agent fix what failed, --full for the slow checks,
+// --slack <channel id> to send the final report to that Slack channel.
 import {
   Client,
   Connection,
@@ -115,6 +116,14 @@ async function main() {
         pr: pr || null,
         profile: args.includes("--full") ? "full" : "fast",
         fix: args.includes("--fix"),
+        ...(flag("slack")
+          ? {
+              report: {
+                to: "slack" as const,
+                channel: flag("slack") as string,
+              },
+            }
+          : {}),
         ...target,
       },
     ],

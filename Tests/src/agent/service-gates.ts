@@ -1,6 +1,11 @@
 // k6, the comparison with the code before the fix, Toxiproxy and Schemathesis, run on the fixed
 // code. The app is started twice on one internal network: the fix ("head") and the code without
 // it ("base"). They run only when the fix touches server code, and say so when they do not.
+//
+// Which of the four run is decided from what the patch does, not its file names: the Decisions API
+// says whether it can change API responses, speed or fault handling, and a check runs above a low
+// threshold (GATE_RUN). Schemathesis also runs whenever a route file or the spec changed. When the
+// API fails, all four run, as before.
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -12,6 +17,7 @@ import {
   touchesServer,
 } from "../checks";
 import { destroyRun, ensureVolume } from "../docker";
+import { emit } from "../events";
 import {
   type Facts,
   fixturesDir,
@@ -20,6 +26,14 @@ import {
   volumes,
 } from "../source";
 import { stageMounts } from "../stage";
+import {
+  brief,
+  type Decide,
+  decide as decisions,
+  GATE_QUESTIONS,
+  GATE_RUN,
+  prob,
+} from "./decisions";
 import type { Gate, ServiceGates } from "./gates";
 import type { Workspace } from "./workspace";
 
@@ -29,6 +43,56 @@ const CHECKS: [CheckId, string][] = [
   ["toxiproxy", "Toxiproxy (network faults)"],
   ["schemathesis", "Schemathesis (API fuzzing)"],
 ];
+
+/**
+ * Why each check may be skipped for this patch; a check without a reason runs. The model can
+ * only make a check run where a file-name rule would skip it, or skip one whose effect it puts
+ * below GATE_RUN. Without an answer every check runs, except Schemathesis without a route change.
+ */
+async function plan(
+  run: string,
+  patch: string,
+  files: string[],
+  decide: Decide,
+): Promise<Partial<Record<CheckId, string>>> {
+  const routes = touchesRoutes(files);
+  try {
+    const d = await decide(patch.slice(0, 20_000), GATE_QUESTIONS);
+    const p = (k: string) => prob(d, k) ?? 1; // a refused question runs its check
+    const http = p("affects_http_api");
+    const perf = p("affects_performance");
+    const fault = p("affects_fault_handling");
+    const below = (what: string, ...ps: number[]) =>
+      `the fix is unlikely to change ${what} (${ps.map((x) => x.toFixed(2)).join(", ")} < ${GATE_RUN})`;
+    const why: Partial<Record<CheckId, string>> = {};
+    if (http < GATE_RUN && perf < GATE_RUN)
+      why.k6 = below("API responses or speed", http, perf);
+    if (perf < GATE_RUN) why["perf-compare"] = below("speed", perf);
+    if (fault < GATE_RUN) why.toxiproxy = below("fault handling", fault);
+    if (!routes && http < GATE_RUN)
+      why.schemathesis = below("API responses, and no route changed", http);
+    await emit(run, {
+      step: "verify",
+      kind: "decision",
+      title: `Service checks: ${
+        CHECKS.filter(([c]) => !why[c])
+          .map(([, n]) => n)
+          .join(", ") || "none needed"
+      }`,
+      ms: d.ms,
+      data: { answers: brief(d), skipped: why, tokens: d.inputTokens },
+    });
+    return why;
+  } catch (e) {
+    await emit(run, {
+      step: "verify",
+      kind: "decision.failed",
+      title: `Service check selection failed, running them all: ${String(e).slice(0, 200)}`,
+      status: "error",
+    });
+    return routes ? {} : { schemathesis: "no API route changed" };
+  }
+}
 
 const skipped = (why: string): Gate[] =>
   CHECKS.map(([, name]) => ({
@@ -51,8 +115,9 @@ export function serviceGates(o: {
   copy: Workspace;
   source: string;
   signal?: AbortSignal;
+  decide?: Decide;
 }): ServiceGates {
-  return async (files) => {
+  return async (files, patch) => {
     const fixtures = fixturesDir(o.repo);
     const stage = JSON.parse(
       await readFile(path.join(fixtures, "stage.json"), "utf8").catch(
@@ -62,6 +127,17 @@ export function serviceGates(o: {
     if (!stage) return skipped("no way to run the app is known");
     if (!touchesServer(files, stage))
       return skipped("the fix does not touch server code");
+
+    const why = await plan(o.run, patch, files, o.decide ?? decisions);
+    if (CHECKS.every(([check]) => why[check]))
+      return CHECKS.map(([check, name]) => ({
+        name,
+        group: "performance" as const,
+        ok: true,
+        detail: "",
+        ms: 0,
+        skipped: why[check] as string,
+      }));
 
     const id = `${o.run}-svc${o.attempt}`;
     const facts = {
@@ -88,8 +164,16 @@ export function serviceGates(o: {
       };
       const out: Gate[] = [];
       for (const [check, name] of CHECKS) {
-        if (check === "schemathesis" && !touchesRoutes(files)) {
-          out.push(...skipped("no API route changed").slice(3));
+        const skip = why[check];
+        if (skip) {
+          out.push({
+            name,
+            group: "performance",
+            ok: true,
+            detail: "",
+            ms: 0,
+            skipped: skip,
+          });
           continue;
         }
         const item: PlanItem = {

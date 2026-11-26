@@ -3,6 +3,7 @@
 // finished node, on any worker.
 import type { BaseCheckpointSaver } from "@langchain/langgraph";
 import { emit } from "../events";
+import { type Decide, decide } from "./decisions";
 import {
   AGENTS,
   type Agents,
@@ -27,6 +28,11 @@ export async function runFix(
     publish?: Publisher;
     services?: FixContext["services"];
     agents?: Agents;
+    /** Where the final report goes; without it, nowhere. */
+    report?: FixContext["report"];
+    repo?: string;
+    /** The Decisions API; the proofs hand in a scripted stand-in. */
+    decide?: Decide;
     /** Model budget of the run in US dollars. */
     limitUsd?: number;
   },
@@ -39,6 +45,9 @@ export async function runFix(
       run,
       spend: await Spend.load(run, options.limitUsd),
       agents: options.agents ?? AGENTS,
+      decide: options.decide ?? decide,
+      report: options.report,
+      repo: options.repo,
       publish: options.publish,
       services: options.services,
       ...deps,

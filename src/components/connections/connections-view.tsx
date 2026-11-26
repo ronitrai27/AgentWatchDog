@@ -4,12 +4,16 @@ import {
   ArrowLeftRightIcon,
   ArrowRightIcon,
   CheckCircle2Icon,
-  LayersIcon,
   SettingsIcon,
   XIcon,
 } from "lucide-react";
 import Image from "next/image";
 import { useState } from "react";
+import type {
+  ReportConnection,
+  ReportProvider,
+} from "@/lib/report-connections";
+import { SLACK_CAPABILITIES, SlackDialog } from "./slack-dialog";
 
 type Category = "Observability" | "Deploys & Cloud" | "Workflow";
 
@@ -44,12 +48,8 @@ const CONNECTORS: Connector[] = [
     recommended: true,
     category: "Workflow",
     description:
-      "Post root-cause summaries to incident channels and request human approval before merging fixes.",
-    scopes: [
-      "Incident thread updates",
-      "Merge approval actions",
-      "Alert digests",
-    ],
+      "Rox reports in your channel after every run: what failed, the root cause, the fix and the pull request.",
+    scopes: SLACK_CAPABILITIES,
   },
   {
     id: "sentry",
@@ -197,18 +197,30 @@ function ConnectorTile({
   );
 }
 
-export function ConnectionsView({ repo }: { repo: string | null }) {
-  const [enabled, setEnabled] = useState<Record<string, boolean>>(() => ({
+export function ConnectionsView({
+  repo,
+  slack,
+  reportTo,
+}: {
+  repo: string | null;
+  slack: ReportConnection | null;
+  reportTo: ReportProvider | null;
+}) {
+  const [demo, setDemo] = useState<Record<string, boolean>>(() => ({
     github: repo !== null,
     sentry: true,
-    slack: true,
   }));
   const [inspecting, setInspecting] = useState<Connector | null>(null);
+  const [slackOpen, setSlackOpen] = useState(false);
+  // Slack is real: its state comes from the server, never from a local toggle.
+  const enabled: Record<string, boolean> = { ...demo, slack: slack !== null };
 
   const toggle = (id: string) =>
-    setEnabled((prev) => ({ ...prev, [id]: !prev[id] }));
+    id === "slack"
+      ? setSlackOpen(true)
+      : setDemo((prev) => ({ ...prev, [id]: !prev[id] }));
 
-  const activeCount = Object.values(enabled).filter(Boolean).length;
+  const _activeCount = Object.values(enabled).filter(Boolean).length;
 
   return (
     <div className="-mx-4 -my-8 sm:-mx-6 sm:-my-12 flex min-h-[calc(100svh-3.5rem)] flex-col bg-paper/60">
@@ -388,6 +400,13 @@ export function ConnectionsView({ repo }: { repo: string | null }) {
                   <p className="mt-3.5 line-clamp-2 text-[13px] leading-relaxed text-ink-soft">
                     {item.description}
                   </p>
+                  {item.id === "slack" && slack && (
+                    <p className="mt-2 text-[12px] font-medium text-green-900">
+                      {slack.workspace ?? "Slack"} · #
+                      {slack.channelName ?? slack.channelId}
+                      {reportTo === "slack" ? " · gets the final report" : ""}
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex items-center justify-between rounded-b-xl border-t border-ink/18 bg-paper/45 px-5 py-2.5">
@@ -410,7 +429,11 @@ export function ConnectionsView({ repo }: { repo: string | null }) {
                   <button
                     type="button"
                     aria-label={`Configure ${item.name}`}
-                    onClick={() => setInspecting(item)}
+                    onClick={() =>
+                      item.id === "slack"
+                        ? setSlackOpen(true)
+                        : setInspecting(item)
+                    }
                     className="focusable grid size-7 place-items-center rounded-md text-ink/55 transition-colors hover:bg-ink/8 hover:text-ink"
                   >
                     <SettingsIcon aria-hidden="true" className="size-4" />
@@ -421,6 +444,10 @@ export function ConnectionsView({ repo }: { repo: string | null }) {
           })}
         </ul>
       </div>
+
+      {slackOpen && (
+        <SlackDialog connection={slack} onClose={() => setSlackOpen(false)} />
+      )}
 
       {/* Minimal demo configuration modal when clicking the gear button */}
       {inspecting && (

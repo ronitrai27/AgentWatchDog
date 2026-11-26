@@ -27,9 +27,18 @@ export function prBody(o: {
   gates: Gate[];
   review: Review | null;
   attempts: { n: number; by: string | null }[];
+  /** Text that tried to steer the agent; ignored, and shown here so a human sees it. */
+  injections?: { source: string; p: number; asks: string[] }[];
   run: string;
   usd: number;
 }): string {
+  const injected = o.injections?.length
+    ? `> [!CAUTION]
+> **This change contains text aimed at AI agents.** It was ignored, and is shown so a human can look at it:
+${o.injections.map((i) => `> - In the ${i.source} (${(i.p * 100).toFixed(0)}% sure)${i.asks.length ? `: asks to ${i.asks.join(", ")}` : ""}`).join("\n")}
+
+`
+    : "";
   const checks = o.gates.filter((g) => g.group !== "guard");
   const ran = checks.filter((g) => !g.skipped);
   const passed = ran.filter((g) => g.ok).length;
@@ -58,7 +67,7 @@ export function prBody(o: {
     `| ${mark(g)} ${g.name} | ${g.skipped ? "skipped" : g.ok ? "passed" : "failed"} | ${g.skipped ? "-" : seconds(g.ms)} | ${oneLine(g.skipped ?? g.detail ?? "", 220) || "-"} |`;
 
   const earlier = o.attempts.slice(0, -1);
-  return `> [!TIP]
+  return `${injected}> [!TIP]
 > **Verified, ready for human review.** ${passed} of ${ran.length} checks passed${skipped ? `, ${skipped} skipped (reasons below)` : ""}. A human reviews and merges; Rox never merges.
 
 | ✅ Checks | ⏱️ Verify time | 📈 p95 (fix vs before) | 🔁 Attempts | 💵 Model cost |
@@ -113,6 +122,6 @@ ${earlier.length ? `- 🔁 Earlier attempts refused by: ${earlier.map((a) => `at
 </details>
 
 ---
-<sub>Rox Lab run \`${o.run}\` · gpt-4.1-mini · a human reviews and merges; Rox never merges.</sub>
+<sub>Rox Lab run \`${o.run}\` · gpt-4.1-mini, decisions by gpt-6-luna · a human reviews and merges; Rox never merges.</sub>
 `;
 }

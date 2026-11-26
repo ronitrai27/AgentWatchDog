@@ -12,6 +12,7 @@ import { CASES } from "../../Tests/src/agent/cases";
 import { checkpoints } from "../../Tests/src/agent/checkpoints";
 import type { Publisher } from "../../Tests/src/agent/graph";
 import { REPO, startCase } from "../../Tests/src/agent/lab-run";
+import type { ReportTarget } from "../../Tests/src/agent/notify";
 import {
   commitFiles,
   filesFrom,
@@ -240,6 +241,8 @@ export type FixInput = {
   publish?:
     | { repo: string; kind: "pr"; branch: string }
     | { repo: string; kind: "seeded" };
+  /** Where the final report goes (the user's choice in Connections); without it, nowhere. */
+  report?: ReportTarget;
 };
 
 /** For a seeded bug: a branch with the bug, made from main, for the fix to be proposed to. */
@@ -336,7 +339,7 @@ export async function labFix(input: FixInput): Promise<FixResult> {
       const found = await ws.exec([
         "sh",
         "-c",
-        `cd ${ws.root} && find . -path ./node_modules -prune -o -path '*/node_modules' -prune -o -type f ( -name package.json -o -name '*.test.*' -o -name '*.spec.*' ) -print`,
+        `cd ${ws.root} && find . -path ./node_modules -prune -o -path '*/node_modules' -prune -o -type f \\( -name package.json -o -name '*.test.*' -o -name '*.spec.*' \\) -print`,
       ]);
       const paths = found.stdout
         .split(/\r?\n/)
@@ -387,6 +390,8 @@ export async function labFix(input: FixInput): Promise<FixResult> {
         checkpointer: await checkpoints(),
         signal,
         publish,
+        report: input.report,
+        repo,
         services: ({ copy, attempt }) =>
           serviceGates({ run, repo, attempt, copy, source, signal }),
       },

@@ -16,7 +16,16 @@ function git(
   return new Promise((resolve, reject) => {
     execFile(
       "git",
-      ["-c", "core.autocrlf=false", "-c", "advice.detachedHead=false", ...args],
+      [
+        // The cache is a bare repository. Naming it with --git-dir keeps git working where
+        // safe.bareRepository=explicit (newer Git for Windows) refuses to find it from cwd.
+        ...(cwd?.endsWith(".git") ? [`--git-dir=${cwd}`] : []),
+        "-c",
+        "core.autocrlf=false",
+        "-c",
+        "advice.detachedHead=false",
+        ...args,
+      ],
       {
         cwd,
         timeout: timeoutMs,
