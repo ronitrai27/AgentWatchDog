@@ -12,7 +12,7 @@ import { CASES } from "../../Tests/src/agent/cases";
 import { checkpoints } from "../../Tests/src/agent/checkpoints";
 import type { Publisher } from "../../Tests/src/agent/graph";
 import { REPO, startCase } from "../../Tests/src/agent/lab-run";
-import type { ReportTarget } from "../../Tests/src/agent/notify";
+import { type ReportTarget, sendRunNote } from "../../Tests/src/agent/notify";
 import {
   commitFiles,
   filesFrom,
@@ -190,6 +190,50 @@ export async function labCheck(
   });
 }
 
+/**
+ * Tells the user's channel how a run ended when the fix agent did not report it itself: the checks
+ * found nothing for Rox to fix, or Rox crashed. Once per run, like the agent's own report.
+ */
+export async function labNote(
+  input: Pick<LabInput, "run" | "repo" | "pr"> & { report: ReportTarget },
+  kind: "checked" | "crashed",
+  results: CheckResult[],
+  reason: string | null,
+): Promise<void> {
+  const where = `${input.repo}${input.pr ? ` PR #${input.pr}` : ""}`;
+  const failed = results.filter(
+    (r) => r.status === "fail" || r.status === "error",
+  );
+  const passed = results.filter((r) => r.status === "pass").length;
+  const lines =
+    kind === "crashed"
+      ? [
+          `Rox hit a problem of its own (not in your code) and stopped: ${reason ?? "unknown error"}`,
+          `${passed} checks had passed before it stopped. No pull request was opened.`,
+        ]
+      : [
+          reason
+            ? `The dependencies could not be installed, so Rox could not run the code: ${reason}`
+            : "Tests and the type checker pass, so there is no bug for Rox to fix. No pull request was opened.",
+          `${passed} of ${results.length} checks passed.`,
+          ...failed.map(
+            (r) =>
+              `${r.title}: ${r.status}, ${r.summary.replace(/\s+/g, " ").slice(0, 180)}`,
+          ),
+        ];
+  await sendRunNote(input.report, {
+    run: input.run,
+    headline:
+      kind === "crashed"
+        ? `Rox stopped on ${where}: an error of its own`
+        : `Rox checked ${where}: nothing for it to fix`,
+    lines,
+    link: input.pr
+      ? `https://github.com/${input.repo}/pull/${input.pr}`
+      : undefined,
+  });
+}
+
 export async function labFinish(
   input: LabInput,
   results: CheckResult[],
@@ -356,7 +400,9 @@ export async function labFix(input: FixInput): Promise<FixResult> {
               (f) =>
                 packages
                   .filter((d) => f.startsWith(`${d}/`))
-                  .sort((x, y) => y.length - x.length)[0],
+                  .sort((x, y) => y.length - x.length)[0] ??
+                // A single-package repository: its tests belong to the root package.
+                (paths.includes("package.json") ? "." : undefined),
             )
             .filter((d): d is string => Boolean(d)),
         ),

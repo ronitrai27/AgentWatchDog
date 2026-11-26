@@ -3,6 +3,7 @@
 // pull request or an honest stop is reported, whatever the models did. The model never writes
 // or sends this message, and nothing in the repository can choose where it goes.
 import {
+  escapeSlackMrkdwn,
   type FixReportStatus,
   slackFromEnv,
 } from "../../../agent/src/integrations/slack";
@@ -101,4 +102,70 @@ export async function sendReport(
     });
     return false;
   }
+}
+
+/**
+ * A short note when a run ends without reaching the fix agent's own report: the checks found
+ * nothing for Rox to fix, or Rox itself crashed. Same channel, same once-per-run rule.
+ */
+export async function sendRunNote(
+  target: ReportTarget,
+  note: { run: string; headline: string; lines: string[]; link?: string },
+): Promise<boolean> {
+  return sendReport(
+    target,
+    {
+      run: note.run,
+      repo: "",
+      status: "stopped",
+      summary: "",
+      rootCause: "",
+      failing: [],
+      checksPassed: [],
+      injections: [],
+    },
+    async (t) => {
+      if (t.to !== "slack")
+        throw new Error(`${t.to} reports are not built yet`);
+      const slack = slackFromEnv();
+      if (!slack) throw new Error("SLACK_BOT_TOKEN is not set");
+      const body = note.lines
+        .map((l) => `• ${escapeSlackMrkdwn(l)}`)
+        .join("\n");
+      const sent = await slack.postMessage({
+        channel: t.channel,
+        text: note.headline,
+        blocks: [
+          {
+            type: "header",
+            text: { type: "plain_text", text: note.headline.slice(0, 150) },
+          },
+          ...(body
+            ? [
+                {
+                  type: "section",
+                  text: { type: "mrkdwn", text: body.slice(0, 2900) },
+                },
+              ]
+            : []),
+          ...(note.link &&
+          /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(note.link)
+            ? [
+                {
+                  type: "context",
+                  elements: [
+                    {
+                      type: "mrkdwn",
+                      text: `<${note.link}|Open the pull request>`,
+                    },
+                  ],
+                },
+              ]
+            : []),
+        ],
+        signal: AbortSignal.timeout(15_000),
+      });
+      return `${sent.channel}/${sent.ts}`;
+    },
+  );
 }

@@ -298,8 +298,11 @@ export function planChecks(
 /** Workspaces whose test script runs Vitest, as folders (run from the copy's root). */
 const VITEST_DIRS = `node -e '
 const fs=require("fs"),path=require("path");const root=require("./package.json");
-const ws=(root.workspaces||[]).flatMap(w=>w.endsWith("/*")?fs.readdirSync(w.slice(0,-2)).map(d=>w.slice(0,-1)+d):[w]);
-for(const d of ws){try{const p=require(path.resolve(d,"package.json"));if(/vitest/.test((p.scripts||{}).test||""))console.log(d)}catch{}}'`;
+let pats=Array.isArray(root.workspaces)?root.workspaces:(root.workspaces&&root.workspaces.packages)||[];
+try{pats=pats.concat([...fs.readFileSync("pnpm-workspace.yaml","utf8").matchAll(/^\\s*-\\s*["\\x27]?([^"\\x27#\\s]+)/gm)].map(m=>m[1]))}catch{}
+const ws=pats.filter(w=>!w.startsWith("!")).flatMap(w=>w.endsWith("/*")?fs.readdirSync(w.slice(0,-2)).map(d=>w.slice(0,-1)+d):[w]);
+let n=0;for(const d of ws){try{const p=require(path.resolve(d,"package.json"));if(/vitest/.test((p.scripts||{}).test||"")){console.log(d);n++}}catch{}}
+if(!n&&/vitest/.test((root.scripts||{}).test||""))console.log(".")'`;
 
 const tailOf = (id: string) =>
   `code=$?; tail -c 6000 /out/${id}/output.txt 2>/dev/null; exit $code`;
@@ -324,7 +327,7 @@ tail -c 6000 ${out}/output.txt; exit $code`;
     case "test":
       return `${start}code=0; ran=0
 for d in $(${VITEST_DIRS}); do
-  ran=1; n=$(echo "$d" | tr / _)
+  ran=1; n=$(echo "$d" | tr / _); [ "$d" = . ] && n=root
   echo "$d" > ${out}/$n.ws.txt
   echo "== $d" >> ${out}/output.txt
   (cd "$d" && npx --no-install vitest run --reporter=default --reporter=junit --outputFile.junit=${out}/$n.xml) >> ${out}/output.txt 2>&1 || code=1
@@ -1202,15 +1205,13 @@ export async function install(
 ): Promise<InstallResult> {
   const started = Date.now();
   const none = { allowed: 0, denied: 0, deniedTargets: [] };
-  if (facts.packageManager !== "npm")
+  if (!facts.packageManager)
     return {
       head: false,
       base: false,
       ms: 0,
       egress: none,
-      summary: facts.packageManager
-        ? `${facts.packageManager} is not supported in the lab yet (npm only)`
-        : "no lockfile, so dependencies cannot be installed exactly",
+      summary: "no lockfile, so dependencies cannot be installed exactly",
     };
   const v = volumes(input.run);
   const net = networks(input.run).install;
@@ -1221,13 +1222,28 @@ export async function install(
     NPM_CONFIG_CACHE: "/cache",
     npm_config_https_proxy: proxy,
     npm_config_proxy: proxy,
+    // pnpm and Yarn: the same proxy, their caches on the shared cache volume, no install scripts.
+    npm_config_store_dir: "/cache/pnpm-store",
+    YARN_CACHE_FOLDER: "/cache/yarn",
+    YARN_HTTPS_PROXY: proxy,
+    YARN_HTTP_PROXY: proxy,
+    YARN_ENABLE_SCRIPTS: "false",
+    YARN_ENABLE_GLOBAL_CACHE: "false",
+    // Yarn 2+: real node_modules, so the checks find their tools the same way as with npm.
+    YARN_NODE_LINKER: "node-modules",
     HTTPS_PROXY: proxy,
     HTTP_PROXY: proxy,
     GIT_CONFIG_COUNT: "1",
     GIT_CONFIG_KEY_0: "safe.directory",
     GIT_CONFIG_VALUE_0: "*",
   };
-  const ci = "npm ci --ignore-scripts --no-audit --no-fund --loglevel=error";
+  // The exact install from the lockfile, with each package manager's own command.
+  const ci = {
+    npm: "npm ci --ignore-scripts --no-audit --no-fund --loglevel=error",
+    pnpm: "pnpm install --frozen-lockfile --ignore-scripts --reporter=append-only",
+    // yarn.lock from Yarn 2+ has a __metadata block; Yarn 1 hands over to the repo's own release.
+    yarn: "if grep -q '^__metadata:' yarn.lock; then yarn install --immutable; else yarn install --frozen-lockfile --ignore-scripts --non-interactive; fi",
+  }[facts.packageManager];
   // Stryker is no longer one of the checks, so it is not installed.
   const stryker = "";
   // The base copy is only needed to compare performance.

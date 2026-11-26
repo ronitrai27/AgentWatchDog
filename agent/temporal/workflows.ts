@@ -78,7 +78,22 @@ export async function labChecks(start: LabStart): Promise<CheckResult[]> {
     ]);
     const failed = (id: string) =>
       results.some((r) => r.id === id && r.status === "fail");
-    if (start.fix && installed.head && (failed("test") || failed("typecheck")))
+    const fixing =
+      start.fix && installed.head && (failed("test") || failed("typecheck"));
+    // Without a fix run, the agent does not report; the run says how it ended instead.
+    if (!fixing && start.report)
+      await steps.labNote(
+        {
+          run: input.run,
+          repo: input.repo,
+          pr: input.pr,
+          report: start.report,
+        },
+        "checked",
+        results,
+        installed.head ? null : installed.summary,
+      );
+    if (fixing)
       await steps.labFix({
         run: input.run,
         repo: input.repo,
@@ -99,6 +114,19 @@ export async function labChecks(start: LabStart): Promise<CheckResult[]> {
     await steps.labFinish(input, results, "completed", null);
     return results;
   } catch (error) {
+    // A crash (not a cancel by a newer run) is reported too, so no run ends silently.
+    const report = start.report;
+    if (!isCancellation(error) && report)
+      await CancellationScope.nonCancellable(() =>
+        cleanup
+          .labNote(
+            { run: input.run, repo: input.repo, pr: input.pr, report },
+            "crashed",
+            results,
+            error instanceof Error ? error.message : String(error),
+          )
+          .catch(() => {}),
+      );
     await CancellationScope.nonCancellable(() =>
       isCancellation(error)
         ? cleanup.labFinish(

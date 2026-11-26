@@ -63,6 +63,9 @@ RUN find /opt/rules/registry -type f \( -name '*.yaml' -o -name '*.yml' \) \
       -exec grep -L 'category: security' {} + | xargs -r rm -f \
  && echo "$(find /opt/rules/registry -type f | wc -l) security rule files kept"
 
+# pnpm and Yarn (classic; a repo's own Yarn 2+ release in .yarn/releases is run by it), pinned.
+RUN npm install -g --ignore-scripts pnpm@10.34.9 yarn@1.22.22
+
 # Mount points owned by the sandbox user, so a new volume mounted there is writable by it.
 RUN chmod -R a+rX /opt \
  && useradd --uid 10001 --create-home sandbox \
