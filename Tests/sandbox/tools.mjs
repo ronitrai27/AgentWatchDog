@@ -97,14 +97,51 @@ const ops = {
   edit({ path: p, old_text, new_text }) {
     const full = inside(p);
     const before = readFileSync(full, "utf8");
-    if (!old_text) throw new Refused("old_text is empty");
-    const count = before.split(old_text).length - 1;
-    if (count === 0)
-      throw new Refused("old_text was not found. Copy it exactly from read_file, without the line numbers");
+    // Models often paste read_file's line numbers or Windows line ends; neither is in the file.
+    const clean = (t) => String(t ?? "").replace(/\r\n/g, "\n").replace(/^[ \t]*\d+\t/gm, "");
+    const oldText = clean(old_text);
+    const newText = clean(new_text);
+    if (!oldText.trim()) throw new Refused("old_text is empty");
+    const count = before.split(oldText).length - 1;
     if (count > 1)
       throw new Refused(`old_text appears ${count} times. Include more surrounding lines so it is unique`);
-    writeFileSync(full, before.split(old_text).join(new_text));
-    return { edited: path.relative(ROOT, full) };
+    if (count === 1) {
+      writeFileSync(full, before.replace(oldText, () => newText));
+      return { edited: path.relative(ROOT, full) };
+    }
+    // Not exact: the same lines with different indentation, if that is unique.
+    const lines = before.split("\n");
+    const want = oldText.split("\n").map((l) => l.trim());
+    while (want.length && !want[0]) want.shift();
+    while (want.length && !want.at(-1)) want.pop();
+    const hits = [];
+    for (let i = 0; i + want.length <= lines.length; i++)
+      if (want.every((w, k) => lines[i + k].trim() === w)) hits.push(i);
+    if (hits.length === 1) {
+      const at = hits[0];
+      const fileIndent = lines[at].match(/^\s*/)[0];
+      const newLines = newText.replace(/^\n+|\n+$/g, "").split("\n");
+      const ownIndent = (newLines.find((l) => l.trim()) ?? "").match(/^\s*/)[0];
+      const shifted = newLines.map((l) =>
+        l.trim() ? fileIndent + (l.startsWith(ownIndent) ? l.slice(ownIndent.length) : l.trimStart()) : l,
+      );
+      lines.splice(at, want.length, ...shifted);
+      writeFileSync(full, lines.join("\n"));
+      return { edited: path.relative(ROOT, full), note: `matched lines ${at + 1}-${at + want.length} ignoring indentation` };
+    }
+    if (hits.length > 1)
+      throw new Refused(`old_text appears ${hits.length} times. Include more surrounding lines so it is unique`);
+    // Show the real lines that look like what was meant, so the next try can copy them.
+    const key = want.find((w) => w.length > 4) ?? "";
+    const probe = key.slice(0, 24);
+    const near = lines
+      .map((l, i) => ({ l, i }))
+      .filter(({ l }) => probe && l.includes(probe))
+      .slice(0, 3)
+      .map(({ l, i }) => `line ${i + 1}: ${JSON.stringify(l)}`);
+    throw new Refused(
+      `old_text was not found. Copy it exactly from read_file, without the line numbers.${near.length ? ` Lines that look similar:\n${near.join("\n")}` : ""}`,
+    );
   },
 
   diff() {

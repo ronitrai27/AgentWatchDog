@@ -3,12 +3,19 @@
 // finished node, on any worker.
 import type { BaseCheckpointSaver } from "@langchain/langgraph";
 import { emit } from "../events";
-import { buildGraph, type FixContext, type FixState } from "./graph";
+import {
+  AGENTS,
+  type Agents,
+  buildGraph,
+  type FixContext,
+  type FixState,
+  type Publisher,
+} from "./graph";
 import { Spend } from "./spend";
 
 export type FixResult = Pick<
   typeof FixState.State,
-  "outcome" | "reason" | "attempts" | "findings" | "verdict"
+  "outcome" | "reason" | "attempts" | "findings" | "verdict" | "pr"
 > & { usd: number; tokens: number; modelCalls: number; resumed: boolean };
 
 export async function runFix(
@@ -17,6 +24,11 @@ export async function runFix(
   options: {
     checkpointer: BaseCheckpointSaver;
     signal?: AbortSignal;
+    publish?: Publisher;
+    services?: FixContext["services"];
+    agents?: Agents;
+    /** Model budget of the run in US dollars. */
+    limitUsd?: number;
   },
 ): Promise<FixResult> {
   const { run, workspaces } = input;
@@ -25,7 +37,10 @@ export async function runFix(
     configurable: { thread_id: run },
     context: {
       run,
-      spend: await Spend.load(run),
+      spend: await Spend.load(run, options.limitUsd),
+      agents: options.agents ?? AGENTS,
+      publish: options.publish,
+      services: options.services,
       ...deps,
     } satisfies FixContext,
     durability: "sync" as const,
@@ -71,6 +86,7 @@ export async function runFix(
     attempts: values.attempts ?? [],
     findings: values.findings ?? null,
     verdict: values.verdict ?? null,
+    pr: values.pr ?? null,
     usd: spend.usd,
     tokens: spend.tokens,
     modelCalls: spend.calls,

@@ -1,5 +1,5 @@
-// Read-only GitHub access for the lab, through the Rox GitHub App: a short-lived token that can
-// only read one repository's contents and pull requests.
+// GitHub access for the lab, through the Rox GitHub App: short-lived tokens for one repository.
+// Reading uses a read-only token; only publishing a fix asks for write access.
 import { createSign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -23,9 +23,10 @@ async function api<T>(
   route: string,
   token: string,
   body?: unknown,
+  method = body ? "POST" : "GET",
 ): Promise<T> {
   const res = await fetch(`${API}${route}`, {
-    method: body ? "POST" : "GET",
+    method,
     headers: {
       authorization: `Bearer ${token}`,
       accept: "application/vnd.github+json",
@@ -43,8 +44,25 @@ async function api<T>(
   return json;
 }
 
+export const appApi = <T = unknown>(
+  method: "GET" | "POST" | "PATCH",
+  route: string,
+  token: string,
+  body?: unknown,
+) => api<T>(route, token, body, method);
+
+/** A token that can push branches and open pull requests in this one repository. */
+export const writeToken = (repo: string) =>
+  token(repo, { contents: "write", pull_requests: "write" });
+
 /** A token that can read this one repository, valid for an hour. */
-export async function readToken(repo: string): Promise<string> {
+export const readToken = (repo: string) =>
+  token(repo, { contents: "read", pull_requests: "read" });
+
+async function token(
+  repo: string,
+  permissions: Record<string, "read" | "write">,
+): Promise<string> {
   const jwt = appJwt();
   const { id } = await api<{ id: number }>(`/repos/${repo}/installation`, jwt);
   const { token } = await api<{ token: string }>(
@@ -52,7 +70,7 @@ export async function readToken(repo: string): Promise<string> {
     jwt,
     {
       repositories: [repo.split("/")[1]],
-      permissions: { contents: "read", pull_requests: "read" },
+      permissions,
     },
   );
   return token;

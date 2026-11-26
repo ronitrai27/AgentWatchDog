@@ -34,12 +34,15 @@ import {
   type Contract,
   InfraError,
   runTests,
+  type ServiceGates,
   typecheck,
   type Verdict,
   verify,
 } from "./gates";
 import { inspectPatch } from "./policy";
+import { prBody } from "./pr-body";
 import type { Spend } from "./spend";
+import type { AgentContext } from "./tools";
 import type { Workspace } from "./workspace";
 
 export const MAX_ATTEMPTS = 3;
@@ -52,6 +55,7 @@ const Attempt = z.object({
   cause: z.string(),
   patch: z.string(),
   summary: z.string(),
+  title: z.string().default(""),
   /** Why it was not accepted; null when it was. */
   failed: z.string().nullable(),
   /** The step that refused it. */
@@ -88,6 +92,11 @@ export const FixState = new StateSchema({
     .nullable()
     .default(null),
   reason: z.string().default(""),
+  review: Review.nullable().default(null),
+  pr: z
+    .object({ url: z.string(), number: z.number(), branch: z.string() })
+    .nullable()
+    .default(null),
 });
 type State = typeof FixState.State;
 
@@ -99,10 +108,47 @@ export const FixContext = z.object({
   workspace: z.custom<() => Promise<Workspace>>(),
   /** A fresh copy for Verify, never touched by an agent. */
   fresh: z.custom<() => Promise<Workspace>>(),
+  /** The three agents; tests hand in stand-ins to drive every path without a model. */
+  agents: z.custom<Agents>(),
+  /** k6, performance, Toxiproxy and Schemathesis for one attempt's fixed copy. */
+  services: z
+    .custom<(o: { copy: Workspace; attempt: number }) => ServiceGates>()
+    .optional(),
+  /** Opens the pull request. Without it a fix is kept as a patch only. */
+  publish: z.custom<Publisher>().optional(),
 });
 export type FixContext = z.infer<typeof FixContext>;
 
-type Nodes = "triage" | "investigate" | "fix" | "verify" | "judge" | "report";
+/** Anything that answers like a `createAgent` agent. */
+export type AgentLike = {
+  invoke(
+    input: { messages: { role: "user"; content: string }[] },
+    config: {
+      context: AgentContext;
+      signal?: AbortSignal;
+      recursionLimit?: number;
+    },
+  ): Promise<{ messages: unknown[]; structuredResponse?: unknown }>;
+};
+export type Agents = Record<"investigator" | "engineer" | "judge", AgentLike>;
+export const AGENTS: Agents = { investigator, engineer, judge };
+
+export type Publisher = (fix: {
+  run: string;
+  ws: Workspace;
+  title: string;
+  body: string;
+  files: string[];
+}) => Promise<{ url: string; number: number; branch: string }>;
+
+type Nodes =
+  | "triage"
+  | "investigate"
+  | "fix"
+  | "verify"
+  | "judge"
+  | "publish"
+  | "report";
 type Node = GraphNode<{
   InputSchema: typeof FixState;
   OutputSchema: typeof FixState;
@@ -137,6 +183,9 @@ const failureText = (c: Contract) =>
 /** Code only: what fails every time is a problem, what fails sometimes is noise. */
 const triage: Node = async (state, rt) => {
   const { workspace, run } = ctxOf(rt);
+  // No test run is not the same as no failing test.
+  if (!state.workspaces.length)
+    return stop("infra", "no test workspace was found, so nothing was checked");
   const ws = await workspace();
   await ws.file("reset");
   const first = (
@@ -243,8 +292,10 @@ async function checkQuotes(ws: Workspace, f: Findings) {
 }
 
 const investigate: Node = async (state, rt) => {
-  const { workspace, run, spend } = ctxOf(rt);
+  const { workspace, run, spend, agents } = ctxOf(rt);
   const ws = await workspace();
+  // The code as it was given, not a refused attempt's edits.
+  await ws.file("reset");
   const contract = state.contract as Contract;
   // A failed attempt usually means a wrong cause, so the Investigator hears about it first.
   const tried = state.attempts.map(
@@ -258,7 +309,7 @@ const investigate: Node = async (state, rt) => {
   const change = state.change
     ? `\n\nWhat this change touched (the cause is often here):\n${state.change.slice(0, 6000)}`
     : "";
-  const result = await investigator.invoke(
+  const result = await agents.investigator.invoke(
     {
       messages: [
         {
@@ -333,7 +384,7 @@ const refuse = (last: Attempt, by: string, failed: string) => {
 };
 
 const fix: Node = async (state, rt) => {
-  const { workspace, run, spend } = ctxOf(rt);
+  const { workspace, run, spend, agents } = ctxOf(rt);
   const ws = await workspace();
   await ws.file("reset"); // Every attempt starts clean, also one repeated after a crash.
   const f = state.findings as Findings;
@@ -344,7 +395,7 @@ const fix: Node = async (state, rt) => {
         `Attempt ${a.n} was refused by ${a.by}: ${a.failed}\nIts patch:\n${a.patch.slice(0, 1200)}`,
     )
     .join("\n\n");
-  const result = await engineer.invoke(
+  const result = await agents.engineer.invoke(
     {
       messages: [
         {
@@ -380,6 +431,7 @@ Workspaces: ${state.workspaces.join(", ")}${lessons ? `\n\nThe working copy is c
     cause: f.cause,
     patch,
     summary: answer?.summary ?? "",
+    title: answer?.title ?? "",
     failed: null,
     by: null,
   };
@@ -392,7 +444,7 @@ Workspaces: ${state.workspaces.join(", ")}${lessons ? `\n\nThe working copy is c
 };
 
 const verifyNode: Node = async (state, rt) => {
-  const { fresh, run } = ctxOf(rt);
+  const { fresh, run, services } = ctxOf(rt);
   const last = state.attempts.at(-1) as Attempt;
   const copy = await fresh();
   try {
@@ -405,11 +457,12 @@ const verifyNode: Node = async (state, rt) => {
         emit(run, {
           step: "verify",
           kind: "gate",
-          title: g.name,
-          status: g.ok ? "pass" : "fail",
+          title: g.skipped ? `${g.name}: skipped, ${g.skipped}` : g.name,
+          status: g.skipped ? "skipped" : g.ok ? "pass" : "fail",
           ms: g.ms,
-          data: g.ok ? {} : { detail: g.detail.slice(0, 600) },
+          data: g.detail ? { detail: g.detail.slice(0, 600) } : {},
         }),
+      services?.({ copy, attempt: last.n }),
     );
     // The sandbox failed, not the fix: the retry policy runs this node again.
     if (verdict.infra) throw new InfraError(verdict.gates.at(-1)?.detail);
@@ -422,11 +475,11 @@ const verifyNode: Node = async (state, rt) => {
 };
 
 const judgeNode: Node = async (state, rt) => {
-  const { workspace, run, spend } = ctxOf(rt);
+  const { workspace, run, spend, agents, publish } = ctxOf(rt);
   const ws = await workspace();
   const last = state.attempts.at(-1) as Attempt;
   const contract = state.contract as Contract;
-  const result = await judge.invoke(
+  const result = await agents.judge.invoke(
     {
       messages: [
         {
@@ -454,7 +507,54 @@ const judgeNode: Node = async (state, rt) => {
   // No answer is not a yes.
   if (!review?.accept)
     return refuse(last, "the Judge", review?.reason ?? "no answer");
-  return stop("fixed", last.summary);
+  return new Command({
+    update: { review, outcome: "fixed" as const, reason: last.summary },
+    goto: publish ? "publish" : "report",
+  });
+};
+
+/** Code only: the branch and the pull request. Safe to run twice. */
+const publishNode: Node = async (state, rt) => {
+  const { publish, workspace, run, spend } = ctxOf(rt);
+  if (!publish) return new Command({ goto: "report" });
+  const last = state.attempts.at(-1) as Attempt;
+  const ws = await workspace();
+  // Exactly the verified patch, whatever happened to the copy since.
+  await ws.file("reset");
+  const applied = await ws.exec(
+    ["git", "-C", ws.root, "apply", "--whitespace=nowarn", "-"],
+    last.patch,
+  );
+  if (applied.code !== 0)
+    throw new Error(
+      `refused: the verified patch no longer applies: ${applied.stderr.slice(0, 200)}`,
+    );
+  const pr = await publish({
+    run,
+    ws,
+    title: /^fix\S*: /.test(last.title)
+      ? last.title.slice(0, 72)
+      : `fix: ${last.summary.slice(0, 60)}`,
+    body: prBody({
+      contract: state.contract as Contract,
+      findings: state.findings as Findings,
+      summary: last.summary,
+      gates: state.verdict?.gates ?? [],
+      review: state.review,
+      attempts: state.attempts,
+      run,
+      usd: spend.usd,
+    }),
+    files: inspectPatch(last.patch).files,
+  });
+  await emit(run, {
+    step: "publish",
+    kind: "pr.opened",
+    title: `Pull request #${pr.number}: ${pr.url}`,
+    status: "pass",
+    data: pr,
+  });
+  return new Command({ update: { pr }, goto: "report" });
 };
 
 const report: Node = async (state, rt) => {
@@ -470,6 +570,7 @@ const report: Node = async (state, rt) => {
       modelCalls: spend.calls,
       tokens: spend.tokens,
       usd: Number(spend.usd.toFixed(5)),
+      pr: state.pr?.url ?? null,
     },
   });
   return {};
@@ -499,7 +600,25 @@ export function buildGraph(checkpointer?: BaseCheckpointSaver) {
     })
     .addNode("fix", fix, { ends: ["verify", "investigate", "report"] })
     .addNode("verify", verifyNode, { ends: ["judge", "investigate", "report"] })
-    .addNode("judge", judgeNode, { ends: ["investigate", "report"] })
+    .addNode("judge", judgeNode, { ends: ["investigate", "publish", "report"] })
+    .addNode("publish", publishNode, {
+      ends: ["report"],
+      // GitHub can be slow or down for a moment; the steps are safe to repeat.
+      retryPolicy: {
+        maxAttempts: 4,
+        initialInterval: 3000,
+        retryOn: (e: unknown) => !/refused/.test(String(e)),
+        logWarning: false,
+      },
+      // A good fix stays a good fix when GitHub refuses it: keep the patch, say why.
+      errorHandler: (_: unknown, failure: NodeError) =>
+        new Command({
+          update: {
+            reason: `fixed, but the pull request failed: ${failure.error.message.slice(0, 300)}`,
+          },
+          goto: "report",
+        }),
+    })
     .addNode("report", report)
     .setNodeDefaults({
       // Only sandbox trouble is worth repeating. A wrong answer is handled by the loops.

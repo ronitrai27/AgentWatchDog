@@ -94,3 +94,61 @@ It stays quiet unless there is a PR, a question or a failure.
 Everything can be replayed, and one click kills a run.
 
 Does the webhook need the Temporal worker? No. It only needs the Temporal server and a client to start the workflow. The worker is a separate process that runs the steps: build, k6, scans, edits. If it crashes or you refresh the page, Temporal resumes from the last finished step. The chat agent is never blocked.
+
+=========================================
+
+Architecture
+
+It's a workflow graph with an evaluator-optimizer loop, with small ReAct agents inside two of its steps. It isn't one big ReAct loop, an orchestrator or parallel agents.
+
+triage → investigate → fix → verify → judge → report (a refused fix goes back to investigate with the reason)
+
+Code only: triage, verify, report.
+ReAct agents: Investigator (read only) and Engineer (edits).
+Single model call: Judge, which can only reject.
+How it uses LangGraph in TypeScript
+Typed state and routing: StateSchema with reducers, and Command so each step updates state and picks the next one together.
+Runtime context: the sandbox and budget are passed in and never saved in a checkpoint.
+Fault handling: setNodeDefaults gives every step retries for sandbox failures only, a timeout, and an error handler that ends the run honestly.
+Checkpoints: PostgresSaver with durability: "sync" saves each step before the next starts.
+Agents: createAgent with middleware for call limits, context clearing, retries, cost tracking and a "must answer now" last call.
+Proof of cause: the Investigator must quote real code, and code checks it. This caught one wrong diagnosis.
+
+===================================================
+
+
+#	Check	Why keep	When it runs
+1	Lint + format (Biome)	One command does both, so it's one check, not two	Every run
+2	TypeScript	Catches real bugs, takes 6 s	Every run
+3	Tests (Vitest)	The core check	Every run
+4	Build	A fix that doesn't build is worthless	Every run
+5	Gitleaks	Secrets in code, takes 1 s	Every run
+6	OSV-Scanner	Vulnerable dependencies	Every run
+7	Semgrep	Unsafe code patterns	Every run
+8	Trivy	Dockerfile and config mistakes (OSV doesn't cover these)	Every run
+9	k6 smoke + load	Broken or slow endpoints under traffic	When server code changed
+10	Performance against the base	p95 of the fix next to the original	When server code changed
+11	Schemathesis	API contract and input fuzzing	When API routes or the spec changed
+12 Toxiproxy — Fault Injection- Google's SRE guidance also emphasizes testing overload handling, graceful degradation and cascading-failure prevention
+
+keep 12 exact with exact reson
+
+===============================================
+
+## Fixes 
+4. Top LangGraph Upgrades for an Autonomous Long-Running Agent
+
+Per the .claude/skills playbook, here are the highest-leverage additions to make this a best-in-class autonomous SRE agent:
+
+Cross-Run Repo Memory with LangGraph Store (PostgresStore) (langgraph-persistence, deep-agents-memory):
+Right now, every run starts with total amnesia—even Attempt 2 in the same run re-discovers repo layout because investigator has checkpointer: false.
+Intra-run: Store a compact repoMap / read-file cache in FixState so retries don't burn 5 calls re-listing folders.
+Cross-run: Compile the graph with PostgresStore (namespaced by ["repo", repo]) so report saves verified post-mortems, architecture map, and known flaky test IDs (triage already detects flaky at graph.ts and throws that signal away!).
+Human-in-the-Loop Escalation via interrupt() Instead of Hard Dead-Ends (langgraph-human-in-the-loop):
+For Phase 3 Case C (bug is inside protected migrations/ or auth/, or findings.outcome === "test_is_wrong"), instead of only dying with gave_up, add an optional escalate node that pauses with interrupt({ findings, blockedPath, suggestedPlan }) (keeping side effects idempotent before interrupt()). Because you already have PostgresSaver + thread_id: run, the developer can approve/guide from the UI hours later via new Command({ resume }) without re-running investigation.
+Worst-Case Upfront Budget Reservation (Concurrency-Safe Spend) (spend.ts):
+Spend.check() currently checks this.usd >= this.limit after previous calls, allowing the final call (or parallel calls once async is enabled) to overshoot $0.06. Port the upfront reserve(worstCaseUsd) pattern you already built in agent/src/graph/graph.ts into Tests/src/agent/spend.ts.
+Checkpoint Lifecycle Cleanup (deleteThread) (checkpoints.ts):
+labCleanup destroys Docker containers/volumes (activities.ts), and events.jsonl already holds the permanent audit trail, so prune PostgresSaver checkpoints (await saver.deleteThread(run)) after terminal runs (or after N days) so rox_lab Postgres blobs don't grow unbounded in long-running operation.
+Fast Decision Classifier Before Docker Spin-Up (langgraph-decision-models):
+Once you connect live Sentry/CI webhooks in Phase 3+, add a sub-500ms pre-sandbox gate (code rules + gpt-4.1-nano or a TypeSafeClassifier decision rubric) before labPrepare/labInstall so transient infra flakes, docs-only PRs, or duplicate Sentry spikes are filtered in <0.5s instead of spinning up Docker volumes first.

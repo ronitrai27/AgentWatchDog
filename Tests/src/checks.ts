@@ -70,25 +70,33 @@ export type RunInput = {
   head: string;
   base: string | null;
   pr: number | null;
-  /** "fast" leaves out the slow, rarely decisive checks; see Task.md. */
+  /** "full" runs k6, the performance comparison, Toxiproxy and Schemathesis even when no server code changed. */
   profile?: "fast" | "full";
 };
 
-/** Only run with the full profile (nightly). */
-const SLOW = new Set<CheckId>([
-  "replay",
-  "flaky",
-  "mutation",
-  "k6",
-  "perf-compare",
-  "toxiproxy",
-  "schemathesis",
-]);
+/** Did the change touch the code of a service the app runs (not its tests)? */
+export function touchesServer(files: string[], stage: Facts["stage"]): boolean {
+  const dirs = (stage?.services ?? []).map(
+    (s) => `${s.dir.replace(/\/$/, "")}/`,
+  );
+  return files.some(
+    (f) =>
+      SOURCE_FILE.test(f) &&
+      !TEST_FILE.test(f) &&
+      dirs.some((d) => f.startsWith(d)),
+  );
+}
+
+/** Did the change touch API routes or the API spec? */
+export const touchesRoutes = (files: string[]) =>
+  files.some((f) =>
+    /(route|router|controller|handler|endpoint)s?\.\w+$|(^|\/)(openapi|swagger)\.(ya?ml|json)$/i.test(
+      f,
+    ),
+  );
 
 export type Installed = { head: boolean; base: boolean; summary: string };
 
-/** The pinned Stryker used for mutation testing, installed into the work copy only. */
-const STRYKER = "10.1.1";
 /** Below this mutation score on the changed code, the check fails. */
 const MUTATION_THRESHOLD = 60;
 /** At most this many changed files are mutated, so the run stays in minutes. */
@@ -155,29 +163,31 @@ export function planChecks(
   const linter = [f.biome && "Biome", f.eslint && "ESLint"]
     .filter(Boolean)
     .join(" + ");
-  const formatter = [f.biome && "Biome", f.prettier && "Prettier"]
-    .filter(Boolean)
-    .join(" + ");
   const tests = f.vitest || Boolean(f.scripts.test);
   const app = f.stage !== null;
-  const mutable = mutationTargets(f).size > 0;
-  const all = [
+  const full = profile === "full";
+  const server = full || touchesServer(f.changed, f.stage);
+  const routes = full || touchesRoutes(f.changed);
+  const notServer = hasBase
+    ? "the change does not touch server code"
+    : "no base commit, so what changed is unknown";
+  return [
     item(
       "lint",
-      `Lint (${linter || "none"})`,
+      `Lint + format (${linter || "none"})`,
       "quality",
       "work",
       Boolean(linter),
       "no Biome or ESLint config",
     ),
-    item(
-      "format",
-      `Format (${formatter || "none"})`,
-      "quality",
-      "work",
-      Boolean(formatter),
-      "no Biome or Prettier config",
-    ),
+    //     item(
+    //       "format",
+    //       `Format (${formatter || "none"})`,
+    //       "quality",
+    //       "work",
+    //       Boolean(formatter),
+    //       "no Biome or Prettier config",
+    //     ),
     item(
       "typecheck",
       "TypeScript",
@@ -195,34 +205,34 @@ export function planChecks(
       Boolean(f.scripts.build),
       "no build script",
     ),
-    item(
-      "replay",
-      "Regression replay (base vs head)",
-      "reliability",
-      "work",
-      tests && hasBase,
-      hasBase ? "no tests" : "no base commit to compare with",
-    ),
-    item(
-      "flaky",
-      `Flaky test detection (${FLAKY_RUNS} runs)`,
-      "reliability",
-      "work",
-      f.vitest,
-      "no Vitest",
-    ),
-    item(
-      "mutation",
-      "Mutation testing (Stryker)",
-      "quality",
-      "work",
-      f.vitest && mutable,
-      !f.vitest
-        ? "no Vitest"
-        : !hasBase
-          ? "no base commit, so the changed files are unknown"
-          : "no source files changed in a Vitest workspace",
-    ),
+    //     item(
+    //       "replay",
+    //       "Regression replay (base vs head)",
+    //       "reliability",
+    //       "work",
+    //       tests && hasBase,
+    //       hasBase ? "no tests" : "no base commit to compare with",
+    //     ),
+    //     item(
+    //       "flaky",
+    //       `Flaky test detection (${FLAKY_RUNS} runs)`,
+    //       "reliability",
+    //       "work",
+    //       f.vitest,
+    //       "no Vitest",
+    //     ),
+    //     item(
+    //       "mutation",
+    //       "Mutation testing (Stryker)",
+    //       "quality",
+    //       "work",
+    //       f.vitest && mutable,
+    //       !f.vitest
+    //         ? "no Vitest"
+    //         : !hasBase
+    //           ? "no base commit, so the changed files are unknown"
+    //           : "no source files changed in a Vitest workspace",
+    //     ),
     item("semgrep", "Semgrep (SAST)", "security", "source", true),
     item("gitleaks", "Gitleaks (secrets)", "security", "source", true),
     item(
@@ -236,50 +246,51 @@ export function planChecks(
     item("trivy", "Trivy (filesystem and IaC)", "security", "source", true),
     item(
       "k6",
-      "k6 (smoke, load, stress, soak)",
+      "k6 (smoke and load)",
       "performance",
       "work",
-      app && Boolean(f.k6Script),
+      app && Boolean(f.k6Script) && server,
       !app
         ? "no way to run the app is known"
-        : "no k6 script in the repository or the lab fixtures",
+        : !f.k6Script
+          ? "no k6 script in the repository or the lab fixtures"
+          : notServer,
     ),
     item(
       "perf-compare",
       "Performance against the base",
       "reliability",
       "work",
-      app && Boolean(f.k6Script) && hasBase,
+      app && Boolean(f.k6Script) && hasBase && server,
       !hasBase
         ? "no base commit to compare with"
-        : "needs the app and a k6 script",
+        : !app || !f.k6Script
+          ? "needs the app and a k6 script"
+          : notServer,
     ),
     item(
       "toxiproxy",
       "Toxiproxy (network faults)",
       "performance",
       "work",
-      app,
-      "no way to run the app is known",
+      app && server,
+      !app ? "no way to run the app is known" : notServer,
     ),
     item(
       "schemathesis",
       "Schemathesis (API fuzzing)",
       "security",
       "work",
-      app && Boolean(f.openapi),
+      app && Boolean(f.openapi) && routes,
       !app
         ? "no way to run the app is known"
-        : "no OpenAPI spec in the repository or the lab fixtures",
+        : !f.openapi
+          ? "no OpenAPI spec in the repository or the lab fixtures"
+          : hasBase
+            ? "no API route or spec changed"
+            : "no base commit, so what changed is unknown",
     ),
   ];
-  return profile === "full"
-    ? all
-    : all.map((p) =>
-        SLOW.has(p.id) && p.applies
-          ? { ...p, applies: false, why: "left out of the fast profile" }
-          : p,
-      );
 }
 
 // --- static checks: a single command each
@@ -299,7 +310,8 @@ function staticScript(id: CheckId, f: Facts, input: RunInput): string {
   switch (id) {
     case "lint":
       return `${start}code=0
-${f.biome ? `npx --no-install biome lint . >> ${out}/output.txt 2>&1 || code=1` : ""}
+${f.biome ? `npx --no-install biome check . >> ${out}/output.txt 2>&1 || code=1` : ""}
+${f.prettier ? `npx --no-install prettier --check . >> ${out}/output.txt 2>&1 || code=1` : ""}
 ${f.eslint ? `npx --no-install eslint . -f json -o ${out}/eslint.json >> ${out}/output.txt 2>&1 || code=1` : ""}
 tail -c 6000 ${out}/output.txt; exit $code`;
     case "format":
@@ -820,7 +832,7 @@ async function k6(
   const e = await execCheck(
     input,
     item.id,
-    `mkdir -p /out/${item.id}; ${k6Command(url, facts.k6Script ?? "", "smoke,load,stress,soak", `/out/${item.id}/summary.json`)} > /out/${item.id}/output.txt 2>&1; ${tailOf(item.id)}`,
+    `mkdir -p /out/${item.id}; ${k6Command(url, facts.k6Script ?? "", "smoke,load", `/out/${item.id}/summary.json`)} > /out/${item.id}/output.txt 2>&1; ${tailOf(item.id)}`,
     {
       mounts: clientMounts(input),
       network: { name: networks(input.run).stage },
@@ -842,7 +854,7 @@ async function k6(
       () => "{}",
     ),
   ) as K6Summary;
-  const parts = ["smoke", "load", "stress", "soak"].map((p) => {
+  const parts = ["smoke", "load"].map((p) => {
     const n = k6Numbers(summary, p);
     return `${p} p95 ${n.p95} ms p99 ${n.p99} ms errors ${(n.errors * 100).toFixed(1)}%${n.thresholdsOk ? "" : " (over limit)"}`;
   });
@@ -1186,11 +1198,11 @@ export async function install(
     GIT_CONFIG_VALUE_0: "*",
   };
   const ci = "npm ci --ignore-scripts --no-audit --no-fund --loglevel=error";
-  const full = input.profile !== "fast";
-  const stryker =
-    full && facts.vitest
-      ? ` && npm install --no-save --ignore-scripts --no-audit --no-fund --loglevel=error @stryker-mutator/core@${STRYKER} @stryker-mutator/vitest-runner@${STRYKER}`
-      : "";
+  // Stryker is no longer one of the checks, so it is not installed.
+  const stryker = "";
+  // The base copy is only needed to compare performance.
+  const needBase =
+    input.profile === "full" || touchesServer(facts.changed, facts.stage);
   const mounts = (target: Mount): Mount[] => [
     { volume: v.src, at: "/src", readOnly: true },
     target,
@@ -1208,7 +1220,7 @@ export async function install(
     signal,
   });
   const baseRun =
-    full && input.base
+    needBase && input.base
       ? await sandbox({
           name: `rox-${input.run}-install-base`,
           run: input.run,

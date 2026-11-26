@@ -4,7 +4,7 @@
 //   pnpm lab start --pr 1 [--repo owner/name] [--wait]
 //   pnpm lab start --ref main --base <sha> [--repo owner/name] [--wait]
 //   pnpm lab cancel --pr 1 [--repo owner/name]
-//   pnpm lab case <seeded bug> [--wait]
+//   pnpm lab case <seeded bug> [--publish] [--wait]
 // Add --fix to start to let the agent fix what failed, --full for the slow checks.
 import {
   Client,
@@ -53,7 +53,7 @@ async function startSeeded(caseId: string) {
     taskQueue: LAB_TASK_QUEUE,
     workflowId: `lab:case:${caseId}`,
     workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE,
-    args: [caseId],
+    args: [caseId, args.includes("--publish") ? repo : null],
   });
   console.log(`Started ${caseId}`);
   console.log(`  run    ${handle.firstExecutionRunId}`);
@@ -61,7 +61,7 @@ async function startSeeded(caseId: string) {
   if (args.includes("--wait")) {
     const r = await handle.result();
     console.log(
-      `  ${r.outcome}${r.resumed ? " (resumed)" : ""}: ${r.attempts.length} attempts, ${r.modelCalls} model calls, $${r.usd.toFixed(4)}\n  ${r.reason}`,
+      `  ${r.pr ? `${r.pr.url}\n  ` : ""}${r.outcome}${r.resumed ? " (resumed)" : ""}: ${r.attempts.length} attempts, ${r.modelCalls} model calls, $${r.usd.toFixed(4)}\n  ${r.reason}`,
     );
   }
   await connection.close();
@@ -92,11 +92,13 @@ async function main() {
         head: p.headSha,
         base: p.baseSha,
         title: p.title,
+        prBranch: p.headRef,
       }))
     : {
         head: await commitSha(repo, ref as string),
         base: baseRef ? await commitSha(repo, baseRef) : null,
         title: `${ref}${baseRef ? ` compared with ${baseRef.slice(0, 7)}` : ""}`,
+        prBranch: undefined,
       };
   await stopRunning(
     client,

@@ -6,6 +6,7 @@ import {
   docker,
   ensureVolume,
   isRunning,
+  type Mount,
   sandbox,
   startService,
   stopService,
@@ -26,6 +27,8 @@ export const agentVolume = (run: string, kind = "agent") =>
 
 export class Workspace {
   readonly container: string;
+  /** Where node_modules folders are, and the installed volume they come from (after open). */
+  private modules: { source: string; dirs: string[] } | null = null;
   constructor(
     readonly run: string,
     readonly kind: "agent" | "verify" = "agent",
@@ -72,6 +75,13 @@ cat /tmp/nm`,
       throw new Error(
         `could not make the working copy: ${copy.stderr.slice(-300)}`,
       );
+    this.modules = {
+      source,
+      dirs: copy.stdout
+        .split(/\r?\n/)
+        .map((d) => d.trim())
+        .filter(Boolean),
+    };
     if (await isRunning(this.container)) return;
     await startService({
       name: this.container,
@@ -94,6 +104,21 @@ cat /tmp/nm`,
       workdir: this.root,
       env: { CI: "1", NO_COLOR: "1", ROX_ROOT: this.root, NODE_ENV: "test" },
     });
+  }
+
+  /** The copy mounted read-only at /app with its dependencies, for running the app itself. */
+  appMounts(): Mount[] {
+    if (!this.modules) throw new Error("the working copy is not open");
+    const { source, dirs } = this.modules;
+    return [
+      { volume: agentVolume(this.run, this.kind), at: "/app", readOnly: true },
+      ...dirs.map((d) => ({
+        volume: source,
+        at: `/app/${d}`,
+        readOnly: true,
+        subpath: d,
+      })),
+    ];
   }
 
   exec(

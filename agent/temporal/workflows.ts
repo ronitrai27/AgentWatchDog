@@ -37,6 +37,8 @@ export const replacedSignal = defineSignal<[string]>("replaced");
 export type LabStart = Omit<LabInput, "run" | "workflowId"> & {
   /** Let the agent fix what failed. */
   fix?: boolean;
+  /** The pull request's branch: the agent's fix is proposed to it. */
+  prBranch?: string;
 };
 
 export async function labChecks(start: LabStart): Promise<CheckResult[]> {
@@ -77,9 +79,19 @@ export async function labChecks(start: LabStart): Promise<CheckResult[]> {
     if (start.fix && installed.head && (failed("test") || failed("typecheck")))
       await steps.labFix({
         run: input.run,
+        repo: input.repo,
         workspaces: facts.workspaces,
         head: input.head,
         base: input.base,
+        ...(start.prBranch
+          ? {
+              publish: {
+                repo: input.repo,
+                kind: "pr" as const,
+                branch: start.prBranch,
+              },
+            }
+          : {}),
       });
     await steps.labFinish(input, results, "completed", null);
     return results;
@@ -106,10 +118,20 @@ export async function labChecks(start: LabStart): Promise<CheckResult[]> {
 }
 
 /** The fix agent alone, on one seeded bug of the lab. */
-export async function labCase(caseId: string): Promise<FixResult> {
+export async function labCase(
+  caseId: string,
+  publishTo: string | null = null,
+): Promise<FixResult> {
   const { runId } = workflowInfo();
   try {
-    return await steps.labFix({ run: runId, caseId, workspaces: [] });
+    return await steps.labFix({
+      run: runId,
+      caseId,
+      workspaces: [],
+      ...(publishTo
+        ? { publish: { repo: publishTo, kind: "seeded" as const } }
+        : {}),
+    });
   } finally {
     await CancellationScope.nonCancellable(() =>
       cleanup.labCleanup({ run: runId }),

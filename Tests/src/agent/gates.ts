@@ -15,7 +15,15 @@ export type Contract = {
 /** Tests that passed before the fix, so they have to pass after it. */
 export type Baseline = { workspaces: string[]; passing: TestId[] };
 
-export type Gate = { name: string; ok: boolean; detail: string; ms: number };
+export type Gate = {
+  name: string;
+  group: Group;
+  ok: boolean;
+  detail: string;
+  ms: number;
+  /** Not run, and why. A skipped check never counts as passed. */
+  skipped?: string;
+};
 export type Verdict = {
   ok: boolean;
   gates: Gate[];
@@ -79,53 +87,67 @@ export async function tidy(ws: Workspace, files: string[]): Promise<void> {
     );
 }
 
+/** The 12 checks, in the order a reader sees them, plus the guardrails around them. */
+export type Group = "guard" | "security" | "quality" | "tests" | "performance";
+
+/** A check that finds a problem but does not block the fix (shown with a warning). */
+export type ServiceGates = (files: string[]) => Promise<Gate[]>;
+
+const SOURCE_ONLY =
+  "the fix may only change source files, so no dependency, Dockerfile or config file changed (enforced by the rules)";
+
 export async function verify(
   fresh: Workspace,
   patch: string,
   contract: Contract,
   baseline: Baseline,
   onGate: (g: Gate) => Promise<unknown> = async () => {},
+  services?: ServiceGates,
 ): Promise<Verdict> {
   const gates: Gate[] = [];
-  const gate = async (
-    name: string,
-    check: () => Promise<string | null> | string | null,
-  ) => {
-    const t0 = Date.now();
-    const problem = await check();
-    const g: Gate = {
-      name,
-      ok: problem === null,
-      detail: problem ?? "",
-      ms: Date.now() - t0,
-    };
+  const record = async (g: Gate) => {
     gates.push(g);
     await onGate(g);
     return g.ok;
   };
+  const gate = async (
+    name: string,
+    group: Group,
+    check: () => Promise<string | null> | string | null,
+  ) => {
+    const t0 = Date.now();
+    const problem = await check();
+    return record({
+      name,
+      group,
+      ok: problem === null,
+      detail: problem ?? "",
+      ms: Date.now() - t0,
+    });
+  };
+  const skip = (name: string, group: Group, why: string) =>
+    record({ name, group, ok: true, detail: "", ms: 0, skipped: why });
   const facts = inspectPatch(patch);
+  let buildNote = "";
   const done = (infra = false): Verdict => ({
     ok: !infra && gates.length > 0 && gates.every((g) => g.ok),
     gates,
     infra,
   });
 
-  const checks: [string, () => Promise<string | null> | string | null][] = [
+  const steps: (() => Promise<boolean>)[] = [
     // Cheapest first; the first failure stops it, the rest would only be noise.
-    ["rules", () => facts.problems.join("; ") || null],
-    [
-      "applies cleanly",
-      async () => {
+    () => gate("rules", "guard", () => facts.problems.join("; ") || null),
+    () =>
+      gate("applies cleanly", "guard", async () => {
         const r = await fresh.exec(
           ["git", "-C", fresh.root, "apply", "--whitespace=nowarn", "-"],
           patch,
         );
         return r.code === 0 ? null : r.stderr.slice(0, 300);
-      },
-    ],
-    [
-      "no secrets",
-      async () => {
+      }),
+    () =>
+      gate("Gitleaks (secrets)", "security", async () => {
         const r = await fresh.exec(
           ["gitleaks", "stdin", "--no-banner", "--redact"],
           patch,
@@ -135,12 +157,24 @@ export async function verify(
         throw new InfraError(
           `gitleaks exit ${r.code}: ${r.stderr.slice(-200)}`,
         );
-      },
-    ],
-    ["types", () => typecheck(fresh)],
-    [
-      `failing tests pass ${RUNS} of ${RUNS}`,
-      async () => {
+      }),
+    () =>
+      gate("Semgrep (SAST)", "security", async () => {
+        const r = await shell(
+          fresh,
+          'HOME=/tmp semgrep scan --config /opt/rules/registry --config /opt/rules/rox --error --metrics off --disable-version-check --quiet "$@" 2>&1',
+          facts.files,
+          180_000,
+        );
+        if (r.code === 0) return null;
+        if (r.code === 1) return r.stdout.slice(-800);
+        throw new InfraError(`semgrep exit ${r.code}: ${r.stdout.slice(-200)}`);
+      }),
+    () => skip("OSV-Scanner (dependencies)", "security", SOURCE_ONLY),
+    () => skip("Trivy (filesystem and IaC)", "security", SOURCE_ONLY),
+    () => gate("TypeScript", "quality", () => typecheck(fresh)),
+    () =>
+      gate(`failing tests pass ${RUNS} of ${RUNS}`, "tests", async () => {
         const dirs = [...new Set(contract.tests.map((t) => t.ws))];
         for (let i = 1; i <= RUNS; i++)
           for (const dir of dirs) {
@@ -156,11 +190,9 @@ export async function verify(
             }
           }
         return null;
-      },
-    ],
-    [
-      "nothing else broke",
-      async () => {
+      }),
+    () =>
+      gate("nothing else broke", "tests", async () => {
         for (const dir of baseline.workspaces) {
           const cases = await runTests(fresh, dir);
           const before = baseline.passing.filter((t) => t.ws === dir);
@@ -182,11 +214,9 @@ export async function verify(
             return `broke "${real[0]?.name}": ${real[0]?.message.slice(0, 500)}`;
         }
         return null;
-      },
-    ],
-    [
-      "lint",
-      async () => {
+      }),
+    () =>
+      gate("Lint + format (Biome)", "quality", async () => {
         const r = await shell(
           fresh,
           'npx --no-install biome check "$@" 2>&1',
@@ -194,11 +224,9 @@ export async function verify(
           60_000,
         );
         return r.code === 0 ? null : r.stdout.slice(-600);
-      },
-    ],
-    [
-      "build",
-      async () => {
+      }),
+    async () => {
+      const ok = await gate("Production build", "quality", async () => {
         // A build can fail from machine load alone (seen once here), so it gets a second try.
         for (let i = 1; ; i++) {
           const r = await shell(
@@ -208,22 +236,50 @@ export async function verify(
             240_000,
           );
           if (r.code === 0) return null;
-          if (i < 2) continue;
+          if (i < 2) {
+            buildNote = `passed on the second try; the first failed with exit ${r.code}: ${r.stdout.slice(-1200)}`;
+            continue;
+          }
           if (r.code === null || r.code === 124)
             throw new InfraError("the build did not finish");
           return `exit ${r.code}: ${r.stdout.slice(-800)}`;
         }
-      },
-    ],
+      });
+      const last = gates.at(-1);
+      if (ok && buildNote && last) last.detail = buildNote;
+      return ok;
+    },
+    // k6, the comparison with the code before the fix, Toxiproxy and Schemathesis.
+    async () => {
+      const found = services
+        ? await services(facts.files)
+        : [
+            "k6 (smoke and load)",
+            "Performance against the base",
+            "Toxiproxy (network faults)",
+            "Schemathesis (API fuzzing)",
+          ].map(
+            (name): Gate => ({
+              name,
+              group: "performance",
+              ok: true,
+              detail: "",
+              ms: 0,
+              skipped: "no way to run the app was given",
+            }),
+          );
+      let ok = true;
+      for (const g of found) ok = (await record(g)) && ok;
+      return ok;
+    },
   ];
 
   try {
-    for (const [name, check] of checks)
-      if (!(await gate(name, check))) return done();
+    for (const step of steps) if (!(await step())) return done();
     return done();
   } catch (error) {
     if (!(error instanceof InfraError)) throw error;
-    await gate("sandbox", () => error.message);
+    await gate("sandbox", "guard", () => error.message);
     return done(true);
   }
 }

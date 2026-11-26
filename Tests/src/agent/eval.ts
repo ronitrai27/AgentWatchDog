@@ -5,9 +5,11 @@ import { startCase } from "./lab-run";
 import { runFix } from "./run";
 
 async function main() {
-  const only = process.argv[2];
+  const only = process.argv[2] === "all" ? undefined : process.argv[2];
+  const times = Number(process.argv[3] ?? 1);
   let total = 0;
-  for (const c of CASES.filter((x) => !only || x.id === only)) {
+  const cases = CASES.filter((x) => !only || x.id === only);
+  for (const c of Array.from({ length: times }, () => cases).flat()) {
     const s = await startCase(c);
     const t0 = Date.now();
     console.log(`\n${c.id}  run ${s.run}`);

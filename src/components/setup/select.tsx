@@ -16,6 +16,8 @@ export type Option = {
   label: string;
   /** Quiet text on the right of the row. */
   hint?: string;
+  /** Highlight pill shown next to the label (e.g. "Recommended"). */
+  badge?: string;
   group?: string;
   icon?: ReactNode;
   disabled?: boolean;
@@ -181,6 +183,11 @@ export function Select({
         >
           {selected?.label ?? placeholder}
         </span>
+        {selected?.badge && (
+          <span className="shrink-0 rounded-full border border-green-800/25 bg-green-800/10 px-2 py-0.5 text-[11px] font-medium leading-none text-green-900">
+            {selected.badge}
+          </span>
+        )}
         <svg
           viewBox="0 0 16 16"
           className={`size-3.5 shrink-0 text-ink-muted transition-transform duration-200 ${open ? "rotate-180" : ""}`}
@@ -282,6 +289,11 @@ export function Select({
               >
                 {option.icon}
                 <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                {option.badge && (
+                  <span className="shrink-0 rounded-full border border-green-800/25 bg-green-800/10 px-2 py-0.5 text-[11px] font-medium leading-none text-green-900">
+                    {option.badge}
+                  </span>
+                )}
                 {option.hint && (
                   <span className="shrink-0 text-xs text-ink-muted">
                     {option.hint}

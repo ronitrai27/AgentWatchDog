@@ -33,7 +33,7 @@ async function main() {
       ],
       [
         "does not compile",
-        "types",
+        "TypeScript",
         () => edit(c.file, c.put, "items.at(-1)?.nope"),
       ],
       [

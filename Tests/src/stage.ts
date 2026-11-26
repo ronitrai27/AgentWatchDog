@@ -3,6 +3,7 @@
 import {
   createNetwork,
   isRunning,
+  type Mount,
   sandbox,
   serviceLogs,
   startService,
@@ -11,6 +12,9 @@ import type { Facts } from "./source";
 import { networks, volumes } from "./source";
 
 export type Side = "head" | "base";
+
+/** Where the app's code comes from, for stages that are not a normal run's work and base copies. */
+export const stageMounts = new Map<string, (side: Side) => Mount[]>();
 
 /** The host name a client uses to reach the target service of one side. */
 export const hostOf = (facts: Facts, side: Side) =>
@@ -40,7 +44,7 @@ export async function ensureStage(
       name,
       run,
       script: `cd /app/${s.dir} && exec ${s.command}`,
-      mounts: [
+      mounts: stageMounts.get(run)?.(side) ?? [
         {
           volume: side === "head" ? v.work : v.base,
           at: "/app",

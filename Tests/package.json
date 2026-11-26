@@ -9,6 +9,7 @@
     "proof:isolation": "tsx src/proof-isolation.ts",
     "proof:tools": "tsx src/agent/proof-tools.ts",
     "proof:gates": "tsx src/agent/proof-gates.ts",
+    "proof:loops": "tsx src/agent/proof-loops.ts",
     "eval": "tsx src/agent/eval.ts",
     "typecheck": "tsc --noEmit -p ."
   },

@@ -170,7 +170,7 @@ function ConnectorTile({
   fill?: boolean;
   size?: "sm" | "md";
 }) {
-  const box = size === "sm" ? "size-9 rounded-lg" : "size-10 rounded-xl";
+  const box = size === "sm" ? "size-9 rounded" : "size-10 rounded";
   const img = size === "sm" ? 18 : 22;
 
   return (
@@ -223,23 +223,13 @@ export function ConnectionsView({ repo }: { repo: string | null }) {
               Connect observability, deployments, and team tools to Rox.
             </p>
           </div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-ink/20 bg-white/90 px-3.5 py-1.5 text-[12px] font-medium text-ink">
-            <span className="size-2 rounded-full bg-[#2f7d4f]" />
-            <span>{activeCount} enabled · Demo preview</span>
-          </div>
         </div>
       </div>
 
       <div className="w-full flex-1 px-6 py-8 sm:px-12">
-        {/* Collections showcase */}
-        <div className="flex items-center gap-2 text-[13px] font-semibold text-ink">
-          <LayersIcon aria-hidden="true" className="size-4 text-ink-soft" />
-          <span>All collections</span>
-        </div>
-
-        <div className="mt-3 grid gap-4 lg:grid-cols-2">
+        <div className="mt-3 mb-10 grid gap-4 lg:grid-cols-2">
           {/* Collection 1: Incident triggers */}
-          <div className="flex items-center justify-between gap-6 overflow-hidden rounded-xl border border-ink/20 bg-white p-6">
+          <div className="flex items-center justify-between gap-6 overflow-hidden rounded-sm border border-ink/20 bg-white p-6">
             <div className="min-w-0">
               <h3 className="font-rox text-[17px] font-semibold leading-snug text-ink">
                 Automated incident triggers
@@ -262,7 +252,7 @@ export function ConnectionsView({ repo }: { repo: string | null }) {
               aria-hidden="true"
               className="hidden shrink-0 items-center gap-2 sm:flex"
             >
-              <div className="grid size-10 place-items-center rounded-xl border border-ink/25 bg-ink text-xs font-bold tracking-tight text-white shadow-2xs">
+              <div className="grid size-10 place-items-center rounded-sm border border-ink/25 bg-ink text-xs font-bold tracking-tight text-white shadow-2xs">
                 ROX
               </div>
               <svg
@@ -294,7 +284,7 @@ export function ConnectionsView({ repo }: { repo: string | null }) {
           </div>
 
           {/* Collection 2: Ship & notify */}
-          <div className="flex items-center justify-between gap-6 overflow-hidden rounded-xl border border-ink/20 bg-linear-to-br from-paper via-white to-green-900/15 p-6">
+          <div className="flex items-center justify-between gap-6 overflow-hidden rounded-sm border border-ink/20 bg-linear-to-br from-paper via-white to-green-900/15 p-6">
             <div className="min-w-0">
               <h3 className="font-rox text-[17px] font-semibold leading-snug text-ink">
                 Ship verified fixes to your team
@@ -340,14 +330,6 @@ export function ConnectionsView({ repo }: { repo: string | null }) {
           </div>
         </div>
 
-        {/* Connector cards grid */}
-        <h3
-          id="all-connectors"
-          className="mt-8 text-[13px] font-semibold text-ink"
-        >
-          Popular & all connectors
-        </h3>
-
         <ul
           aria-label="Connectors"
           className="mt-3 grid list-none gap-4 p-0 sm:grid-cols-2 lg:grid-cols-3"
@@ -357,7 +339,7 @@ export function ConnectionsView({ repo }: { repo: string | null }) {
             return (
               <li
                 key={item.id}
-                className="flex flex-col justify-between rounded-xl border border-ink/20 bg-white transition-colors hover:border-ink/35"
+                className="flex flex-col justify-between rounded border border-ink/20 bg-white transition-colors hover:border-ink/35"
               >
                 <div className="p-5">
                   <div className="flex items-start justify-between gap-3">
@@ -373,7 +355,7 @@ export function ConnectionsView({ repo }: { repo: string | null }) {
                             {item.name}
                           </h4>
                           {item.recommended && (
-                            <span className="inline-flex items-center rounded-full border border-green-800/25 bg-green-800/10 px-2 py-0.5 text-[11px] font-medium leading-none text-green-900">
+                            <span className="inline-flex items-center rounded-full border border-green-800/25 bg-paper px-2 py-0.5 text-[11px] font-medium leading-none text-black">
                               Recommended
                             </span>
                           )}

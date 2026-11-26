@@ -1,8 +1,10 @@
 "use client";
 
+import { AlertTriangleIcon, XIcon } from "lucide-react";
 import { useSearchParams } from "next/navigation";
-import { type ReactNode, useState, useTransition } from "react";
+import { type ReactNode, useEffect, useState, useTransition } from "react";
 import { saveAgentConfig } from "@/app/(app)/home/actions";
+import { WorkflowPanel } from "@/components/settings/workflow-panel";
 import { Select } from "@/components/setup/select";
 import {
   type AgentConfig,
@@ -14,6 +16,13 @@ import {
   type Tone,
 } from "@/lib/agent-config";
 
+const PR_MERGE_ACTIONS = [
+  { value: "open_pr", label: "Open PR", badge: "Recommended" },
+  { value: "merge_pr", label: "Merge PR" },
+] as const;
+
+type PrMergeAction = (typeof PR_MERGE_ACTIONS)[number]["value"];
+
 const TABS = [
   {
     id: "workspace",
@@ -24,6 +33,11 @@ const TABS = [
     id: "agent",
     label: "Agent",
     hint: "How Rox talks, what it can spend and what it reports.",
+  },
+  {
+    id: "workflow",
+    label: "Workflow",
+    hint: "Where Rox reports after a pipeline run and which events invoke it.",
   },
 ] as const;
 
@@ -173,6 +187,7 @@ export function SettingsView({
                 spentTodayUsd={spentTodayUsd}
               />
             )}
+            <WorkflowPanel visible={tab.id === "workflow"} />
           </div>
         </div>
       </div>
@@ -190,6 +205,8 @@ function ConfigForm({
   initial: AgentConfig;
   spentTodayUsd: number;
 }) {
+  const [prAction, setPrAction] = useState<PrMergeAction>("open_pr");
+  const [confirmMerge, setConfirmMerge] = useState(false);
   const [saved, setSaved] = useState(initial);
   const [config, setConfig] = useState(initial);
   // Kept as typed, so a half-written number is not rewritten under the cursor.
@@ -199,6 +216,15 @@ function ConfigForm({
     null,
   );
   const [saving, startSaving] = useTransition();
+
+  useEffect(() => {
+    if (!confirmMerge) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setConfirmMerge(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [confirmMerge]);
 
   const number = (text: string) => (text.trim() ? Number(text) : Number.NaN);
   const next: AgentConfig = {
@@ -230,108 +256,215 @@ function ConfigForm({
 
   if (tab !== "agent") return null;
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        save();
-      }}
-    >
-      <Row label="Tone" hint="How Rox writes to you.">
-        <Select
-          label="Tone"
-          value={config.tone}
-          options={TONES.map((t) => ({ value: t.id, label: t.label }))}
-          onChange={(tone) => change({ tone: tone as Tone })}
-          placeholder="Choose a tone"
-        />
-      </Row>
-      <div className="border-b border-ink/20 py-6">
-        <div className="flex items-baseline justify-between gap-4">
-          <label
-            htmlFor="agent-instructions"
-            className="text-[13px] font-medium text-ink"
-          >
-            Instructions
-          </label>
-          <span className="text-xs tabular-nums text-ink/50">
-            {config.instructions.length}/{MAX_INSTRUCTIONS}
-          </span>
-        </div>
-        <p className="mt-0.5 text-[13px] text-ink/60">
-          Extra details Rox should follow. No keys or passwords.
-        </p>
-        <textarea
-          id="agent-instructions"
-          rows={6}
-          maxLength={MAX_INSTRUCTIONS}
-          value={config.instructions}
-          onChange={(e) => change({ instructions: e.target.value })}
-          placeholder="The payments folder is critical. Always tell me the risk first."
-          className="field mt-3 block w-full resize-none px-3 py-2.5 text-[13px] leading-relaxed"
-        />
-      </div>
-
-      <Group title="Budget">
+    <>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          save();
+        }}
+      >
         <Row
-          htmlFor="day-budget"
-          label="Max per day"
-          hint={`About $${spentTodayUsd.toFixed(2)} used today.`}
+          label="PR merge action"
+          hint={
+            prAction === "open_pr"
+              ? "Open a pull request so humans can review and merge."
+              : "Automatically merge verified pull requests without human review."
+          }
         >
-          <NumberField
-            id="day-budget"
-            before="$"
-            after="USD"
-            value={day}
-            onChange={(v) => {
-              setMessage(null);
-              setDay(v);
-            }}
-          />
-        </Row>
-        <Row
-          htmlFor="max-minutes"
-          label="Max time per run"
-          hint="Ends a run that is stuck."
-        >
-          <NumberField
-            id="max-minutes"
-            after="minutes"
-            value={minutes}
-            onChange={(v) => {
-              setMessage(null);
-              setMinutes(v);
-            }}
-          />
-        </Row>
-      </Group>
-
-      <Group title="Reports">
-        <Row label="Scheduled report" hint="Sent at 12:00 AM.">
           <Select
-            label="Scheduled report"
-            value={config.schedule}
-            options={SCHEDULES.map((s) => ({ value: s.id, label: s.label }))}
-            onChange={(schedule) => change({ schedule: schedule as Schedule })}
-            placeholder="Choose a schedule"
+            label="PR merge action"
+            value={prAction}
+            options={PR_MERGE_ACTIONS.map((a) => ({ ...a }))}
+            onChange={(value) => {
+              const chosen = value as PrMergeAction;
+              if (chosen === prAction) return;
+              if (chosen === "merge_pr") {
+                setConfirmMerge(true);
+                return;
+              }
+              setPrAction("open_pr");
+            }}
+            placeholder="Choose a PR action"
           />
         </Row>
-      </Group>
+        <Row label="Tone" hint="How Rox writes to you.">
+          <Select
+            label="Tone"
+            value={config.tone}
+            options={TONES.map((t) => ({ value: t.id, label: t.label }))}
+            onChange={(tone) => change({ tone: tone as Tone })}
+            placeholder="Choose a tone"
+          />
+        </Row>
+        <div className="border-b border-ink/20 py-6">
+          <div className="flex items-baseline justify-between gap-4">
+            <label
+              htmlFor="agent-instructions"
+              className="text-[13px] font-medium text-ink"
+            >
+              Instructions
+            </label>
+            <span className="text-xs tabular-nums text-ink/50">
+              {config.instructions.length}/{MAX_INSTRUCTIONS}
+            </span>
+          </div>
+          <p className="mt-0.5 text-[13px] text-ink/60">
+            Extra details Rox should follow. No keys or passwords.
+          </p>
+          <textarea
+            id="agent-instructions"
+            rows={6}
+            maxLength={MAX_INSTRUCTIONS}
+            value={config.instructions}
+            onChange={(e) => change({ instructions: e.target.value })}
+            placeholder="The payments folder is critical. Always tell me the risk first."
+            className="field mt-3 block w-full resize-none px-3 py-2.5 text-[13px] leading-relaxed"
+          />
+        </div>
 
-      <div className="flex items-center justify-end gap-4 pt-6">
-        <p
-          aria-live="polite"
-          className={`text-[13px] ${message?.ok === false ? "text-destructive" : "text-ink/60"}`}
-        >
-          {message?.text}
-        </p>
-        <button
-          type="submit"
-          disabled={saving || !dirty}
-          className="btn btn-primary"
-        >
-          {saving ? "Saving…" : "Save changes"}
-        </button>
-      </div>
-    </form>
+        <Group title="Budget">
+          <Row
+            htmlFor="day-budget"
+            label="Max per day"
+            hint={`About $${spentTodayUsd.toFixed(2)} used today.`}
+          >
+            <NumberField
+              id="day-budget"
+              before="$"
+              after="USD"
+              value={day}
+              onChange={(v) => {
+                setMessage(null);
+                setDay(v);
+              }}
+            />
+          </Row>
+          <Row
+            htmlFor="max-minutes"
+            label="Max time per run"
+            hint="Ends a run that is stuck."
+          >
+            <NumberField
+              id="max-minutes"
+              after="minutes"
+              value={minutes}
+              onChange={(v) => {
+                setMessage(null);
+                setMinutes(v);
+              }}
+            />
+          </Row>
+        </Group>
+
+        <Group title="Reports">
+          <Row label="Scheduled report" hint="Sent at 12:00 AM.">
+            <Select
+              label="Scheduled report"
+              value={config.schedule}
+              options={SCHEDULES.map((s) => ({ value: s.id, label: s.label }))}
+              onChange={(schedule) =>
+                change({ schedule: schedule as Schedule })
+              }
+              placeholder="Choose a schedule"
+            />
+          </Row>
+        </Group>
+
+        <div className="flex items-center justify-end gap-4 pt-6">
+          <p
+            aria-live="polite"
+            className={`text-[13px] ${message?.ok === false ? "text-destructive" : "text-ink/60"}`}
+          >
+            {message?.text}
+          </p>
+          <button
+            type="submit"
+            disabled={saving || !dirty}
+            className="btn btn-primary"
+          >
+            {saving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </form>
+
+      {confirmMerge && (
+        <div className="fixed inset-0 z-50 grid place-items-center p-4">
+          <button
+            type="button"
+            aria-label="Close dialog"
+            onClick={() => setConfirmMerge(false)}
+            className="absolute inset-0 bg-ink/35"
+          />
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="merge-pr-dialog-title"
+            aria-describedby="merge-pr-dialog-desc"
+            className="relative z-10 w-full max-w-md rounded-xl border border-ink/25 bg-white p-6 shadow-xl"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-destructive/30 bg-destructive/10 text-destructive">
+                  <AlertTriangleIcon aria-hidden="true" className="size-4" />
+                </span>
+                <div>
+                  <h3
+                    id="merge-pr-dialog-title"
+                    className="font-rox text-[17px] font-semibold text-ink"
+                  >
+                    Switch to Merge PR?
+                  </h3>
+                  <p className="text-[12px] text-ink-muted">
+                    Open PR is recommended
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => setConfirmMerge(false)}
+                className="focusable grid size-7 place-items-center rounded-md text-ink/60 hover:bg-ink/8 hover:text-ink"
+              >
+                <XIcon aria-hidden="true" className="size-4" />
+              </button>
+            </div>
+
+            <p
+              id="merge-pr-dialog-desc"
+              className="mt-4 text-[13px] leading-relaxed text-ink-soft"
+            >
+              Are you sure you want to let Rox merge pull requests
+              automatically? With <strong>Open PR</strong> (Recommended), humans
+              always review and merge every verified fix.
+            </p>
+
+            <div className="mt-4 rounded-lg border border-ink/20 bg-paper p-3.5 text-[12.5px] leading-relaxed text-ink">
+              Switching to <strong>Merge PR</strong> skips manual review once
+              all verification gates pass.
+            </div>
+
+            <div className="mt-5 flex items-center justify-end gap-2 border-t border-ink/20 pt-4">
+              <button
+                type="button"
+                onClick={() => setConfirmMerge(false)}
+                className="btn btn-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPrAction("merge_pr");
+                  setConfirmMerge(false);
+                }}
+                className="btn btn-danger"
+              >
+                Yes, switch to Merge PR
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
