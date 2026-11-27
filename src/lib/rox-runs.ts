@@ -69,3 +69,27 @@ export async function startPrRun(
     await connection.close();
   }
 }
+
+/** The chat buttons and `@rox stop|pause|continue` call these; one run per pull request. */
+export async function controlPrRun(
+  action: "pause" | "resume" | "abort",
+  repo: string,
+  pr: number,
+  why = `${action} from Rox`,
+) {
+  const { abortRun, pauseRun, resumeRun } = await import(
+    "../../agent/temporal/control"
+  );
+  const connection = await Connection.connect({ address: ADDRESS });
+  try {
+    const client = new Client({ connection, namespace: NAMESPACE });
+    const workflowId = `lab:${repo}#${pr}`;
+    return action === "pause"
+      ? await pauseRun(client, workflowId, why)
+      : action === "resume"
+        ? await resumeRun(client, workflowId)
+        : await abortRun(client, workflowId, why);
+  } finally {
+    await connection.close();
+  }
+}

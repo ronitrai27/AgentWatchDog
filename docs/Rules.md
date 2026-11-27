@@ -211,3 +211,15 @@ semantic_cheat (predicate): "Does the added code silence errors, branch on test/
 4. Semantic Check & Service-Gate Selection (checks.ts & service-gates.ts)
 Current hardcoded limitation: touchesRoutes() checks /(route|router|controller|handler|endpoint)s?\.\w+$/i. In your demo app (apps/api/src/modules/catalog/catalog.service.ts), changing a service throw/dto alters the HTTP response without touching catalog.routes.ts, so schemathesis gets skipped! Meanwhile, fixing a log string in apps/api triggers touchesServer === true and runs 2+ minutes of k6 + perf-compare + toxiproxy.
 One /v1/decisions request on { changedFiles, patch } with 3 predicates (affects_http_api_behavior, affects_runtime_performance, affects_dependency_fault_handling) + 1 score (blast_radius) picks the exact heavy checks that actually matter—and if you later wire Auto-Merge PR from Settings, blast_radius > 0.6 can automatically downgrade merge_pr back to open_pr for human review!
+
+==============================================
+A "brain" that talks to the user at the end?
+
+Yes, that's the right shape for the real product, and it doesn't exist in Tests/ yet. Today the "talking" is a fixed Slack template written by code.
+
+In the real agent:
+
+A chat agent (the brain) listens to the user in the chat UI or Slack.
+It starts, stops or resumes runs (Temporal workflows) and reads their trace.
+It explains what happened in its own words.
+It never does the fixing itself; it stays responsive while a run works in the background. That's also your saved rule: Temporal for background runs, never block the chat agent.

@@ -386,8 +386,10 @@ async function checkQuotes(ws: Workspace, f: Findings) {
   const proven: Findings["evidence"] = [];
   const made: Findings["evidence"] = [];
   for (const e of f.evidence) {
+    // The whole file: a cause on line 1,800 is as real as one on line 18. The cap only guards
+    // against a generated file of absurd size.
     let text = "";
-    for (let from = 1; from < 1500; from += 150) {
+    for (let from = 1; from <= 50_000; from += 150) {
       const r = await ws.file("read", { path: e.path, from });
       if (!r.ok) break;
       text += `\n${r.text}`;
@@ -653,7 +655,15 @@ const verifyNode: Node = async (state, rt) => {
  * every flag below JUDGE_CLEAR with a good quality score accepts, anything else is "unsure" and
  * goes to the written review. The questions and thresholds come from decisions-bench.ts.
  */
-function judgeByDecision(d: Decision): Review | "unsure" {
+/** A patch this small, in one file, is fully visible in the diff: no reviewer needs to read more. */
+const TINY_PATCH_LINES = 3;
+
+/**
+ * The fast first filter. A clear flag rejects at once. A clean answer accepts at once only for a
+ * tiny one-file patch, because the classifier sees the diff and nothing else: anything bigger
+ * goes to the reviewer, who can open the callers.
+ */
+function judgeByDecision(d: Decision, patch: string): Review | "review" {
   const flags = Object.keys(JUDGE_FLAGS).map((k) => [k, prob(d, k)] as const);
   const quality = scoreOf(d, "fix_quality");
   const raised = flags.filter(([, p]) => (p ?? 0) > JUDGE_REJECT);
@@ -662,17 +672,32 @@ function judgeByDecision(d: Decision): Review | "unsure" {
       accept: false,
       reason: `The patch ${raised.map(([k, p]) => `${JUDGE_FLAGS[k]} (${(p ?? 0).toFixed(2)})`).join("; ")}.`,
     };
+  const size = inspectPatch(patch);
   if (
+    size.files.length === 1 &&
+    size.added + size.removed <= TINY_PATCH_LINES &&
     quality !== null &&
     quality > JUDGE_QUALITY &&
     flags.every(([, p]) => p !== null && p < JUDGE_CLEAR)
   )
     return {
       accept: true,
-      reason: `A minimal fix of the cause (quality ${quality.toFixed(2)}); no hidden symptom, security change, broken caller or unrelated edit (all under ${JUDGE_CLEAR}).`,
+      reason: `A minimal fix of the cause (${size.added + size.removed} lines, quality ${quality.toFixed(2)}); no hidden symptom, security change, broken caller or unrelated edit (all under ${JUDGE_CLEAR}).`,
     };
-  return "unsure";
+  return "review";
 }
+
+/** The classifier's answers, as leads for the reviewer: what to look at first, not a verdict. */
+const hintsOf = (d: Decision | null) =>
+  d
+    ? `\n\nA fast classifier read only the diff and scored it (0 = no, 1 = yes): ${Object.keys(
+        JUDGE_FLAGS,
+      )
+        .map((k) => `${k} ${(prob(d, k) ?? 0).toFixed(2)}`)
+        .join(
+          ", ",
+        )}, fix_quality ${(scoreOf(d, "fix_quality") ?? 0).toFixed(2)}. Check the highest ones first in the code itself; the classifier can be wrong either way.`
+    : "";
 
 const judgeNode: Node = async (state, rt) => {
   const ctx = ctxOf(rt);
@@ -683,30 +708,39 @@ const judgeNode: Node = async (state, rt) => {
   const evidence = `The problem:\n${failureText(contract)}\n\nThe patch (these already passed: ${state.verdict?.gates.map((g) => g.name).join(", ")}):\n${last.patch.slice(0, 8000)}`;
   let review: Review | null = null;
   let by = "decisions";
+  let d: Decision | null = null;
   try {
-    const d = await decide(evidence, JUDGE_QUESTIONS);
-    const v = judgeByDecision(d);
+    d = await decide(evidence, JUDGE_QUESTIONS);
+    const v = judgeByDecision(d, last.patch);
     await emit(run, {
       step: "judge",
       kind: "decision",
-      title: `Judge questions: ${v === "unsure" ? "unsure, asking for a written review" : v.accept ? "accept" : "reject"}`,
+      title: `Judge questions: ${v === "review" ? "not clear-cut, the reviewer reads the code" : v.accept ? "tiny and clean, accepted" : "rejected"}`,
       ms: d.ms,
       data: { answers: brief(d), tokens: d.inputTokens },
     });
-    if (v !== "unsure") review = v;
+    if (v !== "review") review = v;
   } catch (e) {
     await emit(run, {
       step: "judge",
       kind: "decision.failed",
-      title: `Judge questions failed, asking for a written review: ${String(e).slice(0, 200)}`,
+      title: `Judge questions failed, the reviewer reads the code: ${String(e).slice(0, 200)}`,
       status: "error",
     });
   }
   if (!review) {
-    // The unsure middle, or no answer: a written review by a separate model agent.
+    // Anything not clear-cut, or no answer: a separate model agent that can read the code, with
+    // the classifier's scores as leads. The working copy holds the patch, so it reads the result.
     by = "gpt-4.1-mini";
     const result = await agents.judge.invoke(
-      { messages: [{ role: "user", content: evidence }] },
+      {
+        messages: [
+          {
+            role: "user",
+            content: `${evidence}\n\nThe working copy has this patch applied; read the changed files and their callers.${hintsOf(d)}`,
+          },
+        ],
+      },
       {
         context: {
           run,

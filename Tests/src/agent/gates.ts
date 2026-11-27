@@ -23,7 +23,17 @@ export type Gate = {
   ms: number;
   /** Not run, and why. A skipped check never counts as passed. */
   skipped?: string;
+  /** The check itself could not run (the sandbox, not the fix, failed). */
+  env?: boolean;
 };
+
+/**
+ * Output that means the sandbox failed, not the fix: a read-only or full disk, memory, a killed
+ * process, Docker itself. Such a failure is retried in a fresh copy and never counts as a failed
+ * attempt (it once refused a correct fix three times: a read-only .next folder).
+ */
+const ENVIRONMENT =
+  /\bEROFS\b|read-only file system|\bENOSPC\b|no space left on device|\bENOMEM\b|JavaScript heap out of memory|\bEMFILE\b|\bexit 137\b|^Killed$|Cannot connect to the Docker daemon|No such container/im;
 export type Verdict = {
   ok: boolean;
   gates: Gate[];
@@ -108,6 +118,10 @@ export async function verify(
   const record = async (g: Gate) => {
     gates.push(g);
     await onGate(g);
+    if (!g.ok && g.group !== "guard" && (g.env || ENVIRONMENT.test(g.detail)))
+      throw new InfraError(
+        `${g.name} could not run (the sandbox failed, not the fix): ${g.detail.slice(-300)}`,
+      );
     return g.ok;
   };
   const gate = async (

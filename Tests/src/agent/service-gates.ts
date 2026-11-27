@@ -199,6 +199,8 @@ export function serviceGates(o: {
           detail: r.summary,
           ms: r.ms,
           ...(r.status === "skipped" ? { skipped: r.summary } : {}),
+          // "error" is the check failing to run (the app did not start, a timeout), not a finding.
+          ...(r.status === "error" ? { env: true } : {}),
         });
       }
       return out;

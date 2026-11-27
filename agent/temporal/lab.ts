@@ -15,6 +15,7 @@ import {
 } from "@temporalio/client";
 import { commitSha, pullInfo } from "../../Tests/src/github";
 import { LAB_TASK_QUEUE, TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE } from "./config";
+import { abortRun, pauseRun, resumeRun } from "./control";
 import { labCase, labChecks, replacedSignal } from "./workflows";
 
 const args = process.argv.slice(2);
@@ -70,16 +71,39 @@ async function startSeeded(caseId: string) {
 
 async function main() {
   if (command === "case" && args[1]) return startSeeded(args[1]);
-  if (!["start", "cancel"].includes(command ?? "") || (!pr && !ref)) {
+  const controls = ["pause", "resume", "abort"];
+  if (
+    !["start", "cancel", ...controls].includes(command ?? "") ||
+    (!pr && !ref)
+  ) {
     console.log(
       "Usage: pnpm lab start --pr <number> [--repo owner/name] [--wait]",
     );
-    console.log("       pnpm lab cancel --pr <number> [--repo owner/name]");
+    console.log(
+      "       pnpm lab cancel|pause|resume|abort --pr <number> [--repo owner/name] [--why text]",
+    );
     process.exit(1);
   }
   const connection = await Connection.connect({ address: TEMPORAL_ADDRESS });
   const client = new Client({ connection, namespace: TEMPORAL_NAMESPACE });
   const workflowId = pr ? `lab:${repo}#${pr}` : `lab:${repo}@${ref}`;
+
+  if (controls.includes(command ?? "")) {
+    const why = flag("why") ?? `${command} by hand`;
+    const state =
+      command === "pause"
+        ? await pauseRun(client, workflowId, why)
+        : command === "resume"
+          ? await resumeRun(client, workflowId)
+          : await abortRun(client, workflowId, why);
+    console.log(
+      state
+        ? `${command}: run ${state.run}, step "${state.step}"${state.paused ? " (paused)" : ""}`
+        : "Nothing was running for this pull request.",
+    );
+    await connection.close();
+    return;
+  }
 
   if (command === "cancel") {
     const stopped = await stopRunning(client, workflowId, "cancelled by hand");

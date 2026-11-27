@@ -32,7 +32,7 @@ import {
 } from "../../Tests/src/checks";
 import { destroyRun, ensureVolume } from "../../Tests/src/docker";
 import { cacheDir, runDir } from "../../Tests/src/env";
-import { emit } from "../../Tests/src/events";
+import { emit, readEvents } from "../../Tests/src/events";
 import { appApi, writeToken } from "../../Tests/src/github";
 import {
   changedFiles,
@@ -196,7 +196,7 @@ export async function labCheck(
  */
 export async function labNote(
   input: Pick<LabInput, "run" | "repo" | "pr"> & { report: ReportTarget },
-  kind: "checked" | "crashed",
+  kind: "checked" | "crashed" | "aborted",
   results: CheckResult[],
   reason: string | null,
 ): Promise<void> {
@@ -206,27 +206,34 @@ export async function labNote(
   );
   const passed = results.filter((r) => r.status === "pass").length;
   const lines =
-    kind === "crashed"
+    kind === "aborted"
       ? [
-          `Rox hit a problem of its own (not in your code) and stopped: ${reason ?? "unknown error"}`,
-          `${passed} checks had passed before it stopped. No pull request was opened.`,
+          `The run was stopped by hand: ${reason ?? "no reason given"}`,
+          "Its sandbox was destroyed. No pull request was opened.",
         ]
-      : [
-          reason
-            ? `The dependencies could not be installed, so Rox could not run the code: ${reason}`
-            : "Tests and the type checker pass, so there is no bug for Rox to fix. No pull request was opened.",
-          `${passed} of ${results.length} checks passed.`,
-          ...failed.map(
-            (r) =>
-              `${r.title}: ${r.status}, ${r.summary.replace(/\s+/g, " ").slice(0, 180)}`,
-          ),
-        ];
+      : kind === "crashed"
+        ? [
+            `Rox hit a problem of its own (not in your code) and stopped: ${reason ?? "unknown error"}`,
+            `${passed} checks had passed before it stopped. No pull request was opened.`,
+          ]
+        : [
+            reason
+              ? `The dependencies could not be installed, so Rox could not run the code: ${reason}`
+              : "Tests and the type checker pass, so there is no bug for Rox to fix. No pull request was opened.",
+            `${passed} of ${results.length} checks passed.`,
+            ...failed.map(
+              (r) =>
+                `${r.title}: ${r.status}, ${r.summary.replace(/\s+/g, " ").slice(0, 180)}`,
+            ),
+          ];
   await sendRunNote(input.report, {
     run: input.run,
     headline:
-      kind === "crashed"
-        ? `Rox stopped on ${where}: an error of its own`
-        : `Rox checked ${where}: nothing for it to fix`,
+      kind === "aborted"
+        ? `Rox run on ${where} was aborted`
+        : kind === "crashed"
+          ? `Rox stopped on ${where}: an error of its own`
+          : `Rox checked ${where}: nothing for it to fix`,
     lines,
     link: input.pr
       ? `https://github.com/${input.repo}/pull/${input.pr}`
@@ -451,6 +458,52 @@ export async function labFix(input: FixInput): Promise<FixResult> {
 }
 
 /** Destroys every container and volume of the run, and the checkout on the host. */
+/** One line in the run's trace, from the workflow (which cannot write files itself). */
+export async function labMark(
+  run: string,
+  kind: string,
+  title: string,
+): Promise<void> {
+  await emit(run, { step: "run", kind, title });
+}
+
+/**
+ * The kill switch, after the run was terminated: destroys every container, network and volume of
+ * the run now, and records in the trace where it stopped (the workflow's step, and the agent's
+ * last node when the agent was running). Returns that place.
+ */
+export async function labDestroy(
+  run: string,
+  step: string,
+  why: string,
+): Promise<string> {
+  const t0 = Date.now();
+  const last = (await readEvents(run))
+    .filter((e) => e.kind !== "tool.call" && e.kind !== "model.call")
+    .at(-1);
+  const at =
+    step === "fix agent" && last ? `fix agent, node "${last.step}"` : step;
+  const destroyed = await Promise.all([
+    destroyRun(run),
+    ...[1, 2, 3].map((n) => destroyRun(`${run}-svc${n}`)),
+  ]);
+  await rm(path.join(cacheDir, "checkouts", run), {
+    recursive: true,
+    force: true,
+  });
+  const total = (k: "containers" | "networks" | "volumes") =>
+    destroyed.reduce((sum, d) => sum + d[k], 0);
+  await emit(run, {
+    step: "run",
+    kind: "run.aborted",
+    title: `Aborted at ${at}: ${why}. Destroyed ${total("containers")} containers, ${total("networks")} networks, ${total("volumes")} volumes`,
+    status: "cancelled",
+    ms: Date.now() - t0,
+    data: { at, why, lastEvent: last?.kind ?? null },
+  });
+  return at;
+}
+
 export async function labCleanup(input: Pick<LabInput, "run">): Promise<void> {
   // The app stages Verify started for each attempt, in case a crash left one behind.
   for (let n = 1; n <= 3; n++) await destroyRun(`${input.run}-svc${n}`);
