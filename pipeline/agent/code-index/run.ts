@@ -9,7 +9,7 @@ import { type Mount, sandbox } from "../../src/docker";
 import { labDir } from "../../src/env";
 import type { Index } from "./indexer.mts";
 
-const HERE = path.join(labDir, "Agent_2", "code-index");
+const HERE = path.join(labDir, "agent", "code-index");
 const SPLIT = "\n@@ROX-BASE@@\n";
 
 let bundle: Buffer | null = null;

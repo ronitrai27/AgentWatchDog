@@ -218,9 +218,25 @@ function ConfigForm({
     null,
   );
   const [saving, startSaving] = useTransition();
-  // Saved with the rest: the pipeline reads it when a fix is verified.
+  // Saved the moment it is chosen (the pipeline reads it when a fix is verified), on top of the
+  // last saved config, so other unsaved edits stay unsaved.
   const prAction = config.prAction;
-  const setPrAction = (a: PrMergeAction) => change({ prAction: a });
+  const setPrAction = (a: PrMergeAction) => {
+    change({ prAction: a });
+    startSaving(async () => {
+      const result = await saveAgentConfig({ ...saved, prAction: a });
+      if (result.ok) setSaved((s) => ({ ...s, prAction: a }));
+      else change({ prAction: saved.prAction });
+      setMessage(
+        result.ok
+          ? {
+              ok: true,
+              text: a === "merge_pr" ? "Saved: Merge PR" : "Saved: Open PR",
+            }
+          : { ok: false, text: result.error },
+      );
+    });
+  };
 
   useEffect(() => {
     if (!confirmMerge) return;

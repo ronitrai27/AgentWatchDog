@@ -300,16 +300,20 @@ export async function startEgress(run: string, installNetwork: string) {
 }
 
 /** Removes every container, network and volume of a run. Safe to call more than once. */
-export async function destroyRun(
-  run: string,
-): Promise<{ containers: number; volumes: number; networks: number }> {
+export async function destroyRun(run: string): Promise<{
+  containers: number;
+  volumes: number;
+  networks: number;
+  /** What was removed, by name (the kill switch lists each in the trace). */
+  names: { containers: string[]; networks: string[]; volumes: string[] };
+}> {
   const filter = `label=rox.run=${run}`;
   const list = async (args: string[]) =>
     (await docker([...args, "--filter", filter])).split("\n").filter(Boolean);
-  const containers = await list(["ps", "-aq"]);
+  const containers = await list(["ps", "-a", "--format", "{{.Names}}"]);
   if (containers.length)
     await docker(["rm", "-f", ...containers]).catch(() => {});
-  const networks = await list(["network", "ls", "-q"]);
+  const networks = await list(["network", "ls", "--format", "{{.Name}}"]);
   if (networks.length)
     await docker(["network", "rm", ...networks]).catch(() => {});
   const volumes = await list(["volume", "ls", "-q"]);
@@ -319,5 +323,6 @@ export async function destroyRun(
     containers: containers.length,
     volumes: volumes.length,
     networks: networks.length,
+    names: { containers, networks, volumes },
   };
 }

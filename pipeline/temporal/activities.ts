@@ -10,7 +10,6 @@ import { promisify } from "node:util";
 import { Context } from "@temporalio/activity";
 import { ApplicationFailure } from "@temporalio/common";
 import {
-  type IncidentFacts,
   incidentFacts,
   sentryFromEnv,
 } from "../../agent/src/integrations/sentry";
@@ -24,7 +23,7 @@ import {
 } from "../agent/check-plan";
 import { checkpoints } from "../agent/checkpoints";
 import { runCheck2 } from "../agent/checks2";
-import type { Publisher } from "../agent/graph";
+import type { Incident, Publisher } from "../agent/graph";
 import { type HuntResult, runHunt } from "../agent/hunt";
 import { REPO, startCase } from "../agent/lab-run";
 import { type ReportTarget, sendRunNote } from "../agent/notify";
@@ -44,7 +43,13 @@ import {
 import { destroyRun, ensureVolume } from "../src/docker";
 import { cacheDir, runDir } from "../src/env";
 import { emit, readEvents } from "../src/events";
-import { appApi, mergePullRequest, writeToken } from "../src/github";
+import {
+  appApi,
+  commitSha,
+  mergePullRequest,
+  readToken,
+  writeToken,
+} from "../src/github";
 import {
   finishRun,
   markMerged,
@@ -372,7 +377,11 @@ export type FixInput = {
    */
   publish?:
     | { repo: string; kind: "pr"; branch: string }
-    | { repo: string; kind: "seeded" };
+    | { repo: string; kind: "seeded" }
+    /** A Sentry fix: a new branch from the default branch, and a pull request into it. */
+    | { repo: string; kind: "incident"; base: string };
+  /** A Sentry incident: the fix agent reproduces it in a test first. */
+  incident?: Incident | null;
   /** Where the final report goes (the user's choice in Connections); without it, nowhere. */
   report?: ReportTarget;
   /** The user's settings for this run: their model, and whether Rox merges its own fix. */
@@ -451,7 +460,9 @@ export async function labFix(input: FixInput): Promise<FixResult> {
       kind: "agent.started",
       title: input.caseId
         ? `Seeded bug ${input.caseId}`
-        : "Fixing the failures",
+        : input.incident
+          ? "Reproducing and fixing the Sentry error"
+          : "Fixing the failures",
       status: "running",
       attempt: attempt(),
     });
@@ -490,6 +501,12 @@ export async function labFix(input: FixInput): Promise<FixResult> {
         publish = publisher(kit, async () => ({
           repo: p.repo,
           base: p.branch,
+        }));
+      if (p?.kind === "incident")
+        publish = publisher(kit, async () => ({
+          repo: p.repo,
+          base: p.base,
+          intoDefault: true,
         }));
       // The package folders that hold test files. Package.json globs ("apps/*") are not folders.
       const found = await ws.exec([
@@ -544,7 +561,7 @@ export async function labFix(input: FixInput): Promise<FixResult> {
     const { settings } = input;
     const models = await runModels(settings.userId, settings.modelId);
     const result = await kit.runFix(
-      { run, workspaces, change },
+      { run, workspaces, change, incident: input.incident ?? null },
       { workspace, fresh },
       {
         checkpointer: await kit.checkpoints(),
@@ -657,27 +674,56 @@ export async function labDestroy(
   const last = (await readEvents(run))
     .filter((e) => e.kind !== "tool.call" && e.kind !== "model.call")
     .at(-1);
+  // The UI's kill switch does not ask the workflow where it was (no waiting), so the last step
+  // written to the trace says it.
   const at =
-    step === "fix agent" && last ? `fix agent, node "${last.step}"` : step;
+    step === "fix agent" && last
+      ? `fix agent, node "${last.step}"`
+      : step === "unknown" && last
+        ? `"${last.title}"`
+        : step;
   const destroyed = await Promise.all([
     destroyRun(run),
     ...[1, 2, 3].map((n) => destroyRun(`${run}-svc${n}`)),
   ]);
+  // One trace line per thing the kill removed, so the user sees exactly what was killed.
+  const killed = async (what: string, verb: string, names: string[]) => {
+    for (const name of names)
+      await emit(run, {
+        step: "run",
+        kind: "kill.removed",
+        title: `${verb} ${what} ${name}`,
+        status: "cancelled",
+        data: { what, name },
+      });
+  };
+  const all = (k: "containers" | "networks" | "volumes") =>
+    destroyed.flatMap((d) => d.names[k]);
+  await killed("container", "Killed", all("containers"));
+  await killed("network", "Removed", all("networks"));
+  await killed("volume", "Removed", all("volumes"));
   await rm(path.join(cacheDir, "checkouts", run), {
     recursive: true,
     force: true,
+  });
+  await emit(run, {
+    step: "run",
+    kind: "kill.removed",
+    title: "Deleted the code checkout",
+    status: "cancelled",
   });
   const total = (k: "containers" | "networks" | "volumes") =>
     destroyed.reduce((sum, d) => sum + d[k], 0);
   await emit(run, {
     step: "run",
     kind: "run.aborted",
-    title: `Aborted at ${at}: ${why}. Destroyed ${total("containers")} containers, ${total("networks")} networks, ${total("volumes")} volumes`,
+    title: `Killed at ${at}: ${why}. Destroyed ${total("containers")} containers, ${total("networks")} networks, ${total("volumes")} volumes`,
     status: "cancelled",
     ms: Date.now() - t0,
     data: { at, why, lastEvent: last?.kind ?? null },
   });
-  await finishRun(run, "aborted", `${why} (stopped at: ${at})`);
+  // The web already marked it cancelled when the switch was pressed; this covers `pnpm lab abort`.
+  await finishRun(run, "cancelled", `${why} (stopped at: ${at})`);
   return at;
 }
 
@@ -982,6 +1028,19 @@ export async function agent2Hunt(input: LabInput): Promise<HuntResult | null> {
 
 // ---------- Sentry incidents ----------
 
+/** The head of the repository's default branch: what a Sentry incident run checks out. */
+export async function incidentHead(
+  repo: string,
+): Promise<{ sha: string; branch: string }> {
+  const token = await readToken(repo);
+  const { default_branch: branch } = await appApi<{ default_branch: string }>(
+    "GET",
+    `/repos/${repo}`,
+    token,
+  );
+  return { sha: await commitSha(repo, branch), branch };
+}
+
 export type IncidentInput = {
   run: string;
   repo: string | null;
@@ -998,13 +1057,149 @@ export type IncidentInput = {
  * the in-app frame where it broke, release, service) and tells the user's channel. Event text is
  * data: it is only quoted, never followed.
  */
-export async function incidentBrief(
-  input: IncidentInput,
-): Promise<IncidentFacts> {
+/** Sentry names files in many ways ("app:///", "webpack-internal:///./", "./"); a repo path is wanted. */
+const repoPath = (file: string) =>
+  file
+    .replace(/^webpack-internal:\/\/\/(\([^)]*\)\/)?/, "")
+    .replace(/^[a-z][\w+.-]*:\/\/\/?/i, "")
+    .replace(/^\.?\//, "")
+    .replace(/[?#].*$/, "");
+
+/**
+ * The recent commits that touched the file that threw, or the latest on the default branch when
+ * Sentry's file name is not a repository path. Read-only. "sha date message" each.
+ */
+async function recentCommits(
+  repo: string,
+  file: string | null,
+): Promise<{ commits: string[]; scope: string }> {
+  const token = await readToken(repo);
+  type C = {
+    sha: string;
+    commit: { message: string; author?: { date?: string } };
+  };
+  const line = (c: C) =>
+    `${c.sha.slice(0, 7)} ${c.commit.author?.date?.slice(0, 10) ?? ""} ${c.commit.message.split("\n")[0]?.slice(0, 100)}`;
+  let path = file ? repoPath(file) : "";
+  // An absolute path from the machine that ran the app ("R:/app/apps/api/src/x.ts", "/srv/app/src/x.ts"):
+  // keep it from the first folder that exists at the root of the repository.
+  if (path) {
+    const root = await appApi<{ name: string }[]>(
+      "GET",
+      `/repos/${repo}/contents/`,
+      token,
+    ).catch(() => []);
+    const names = new Set(root.map((e) => e.name));
+    const parts = path.split("/");
+    const at = parts.findIndex((p) => names.has(p));
+    if (at > 0) path = parts.slice(at).join("/");
+  }
+  if (path) {
+    const byFile = await appApi<C[]>(
+      "GET",
+      `/repos/${repo}/commits?per_page=5&path=${encodeURIComponent(path)}`,
+      token,
+    ).catch(() => []);
+    if (byFile.length) return { commits: byFile.map(line), scope: path };
+  }
+  const latest = await appApi<C[]>(
+    "GET",
+    `/repos/${repo}/commits?per_page=5`,
+    token,
+  ).catch(() => []);
+  return { commits: latest.map(line), scope: "the default branch" };
+}
+
+/**
+ * Step 1 and 2 of a Sentry run: what broke, how bad, new or a regression (from Sentry), and what
+ * changed near the code that threw (from GitHub). The result goes to the fix agent as data.
+ */
+export async function incidentBrief(input: IncidentInput): Promise<Incident> {
+  const t0 = Date.now();
+  await emit(input.run, {
+    step: "incident",
+    kind: "incident.received",
+    title: `Sentry ${input.trigger.replace("sentry:", "").replace("_", " ")}: ${input.title}`,
+    status: "running",
+    data: { why: input.why, issueId: input.issueId, link: input.link },
+  });
   const sentry = sentryFromEnv();
   if (!sentry)
     throw new Error("SENTRY_AUTH_TOKEN and SENTRY_ORG are not set in .env");
   const facts = await incidentFacts(sentry, input.issueId);
+  // Event text is data: quoted into the trace, never followed.
+  await emit(input.run, {
+    step: "incident",
+    kind: "incident.facts",
+    title: facts.exception
+      ? `${facts.exception}${facts.frame ? ` at ${facts.frame}` : ""}`
+      : `Read issue ${input.issueId} from Sentry`,
+    status: "pass",
+    ms: Date.now() - t0,
+    data: {
+      summary: [facts.service, facts.release, facts.environment]
+        .filter(Boolean)
+        .join(" · "),
+      link: input.link ?? facts.link ?? null,
+    },
+  });
+  // How bad, and is it new.
+  const impact = [
+    facts.users !== null ? `${facts.users} users affected` : null,
+    facts.count !== null ? `${facts.count} events` : null,
+    facts.firstSeen
+      ? `first seen ${facts.firstSeen.slice(0, 16).replace("T", " ")}`
+      : null,
+    facts.regressed
+      ? "a REGRESSION (it was resolved and came back)"
+      : input.trigger === "sentry:new_issue"
+        ? "a new issue"
+        : null,
+  ].filter(Boolean);
+  await emit(input.run, {
+    step: "incident",
+    kind: "incident.triage",
+    title: impact.length ? impact.join(", ") : "Impact not known",
+    status: "pass",
+    data: {
+      users: facts.users,
+      count: facts.count,
+      regressed: facts.regressed,
+    },
+  });
+  // What changed near the code that threw.
+  const recent = input.repo
+    ? await recentCommits(input.repo, facts.file).catch(() => ({
+        commits: [] as string[],
+        scope: "",
+      }))
+    : { commits: [] as string[], scope: "" };
+  await emit(input.run, {
+    step: "incident",
+    kind: "incident.commits",
+    title: recent.commits.length
+      ? `Recent changes to ${recent.scope}: ${recent.commits[0]}`
+      : "No recent commits found",
+    status: "pass",
+    data: { summary: recent.commits.join("\n"), scope: recent.scope },
+  });
+  const incident: Incident = {
+    trigger: input.trigger,
+    issueId: input.issueId,
+    title: facts.title || input.title,
+    why: input.why,
+    link: input.link ?? facts.link,
+    exception: facts.exception,
+    frame: facts.frame,
+    stack: facts.stack,
+    release: facts.release,
+    environment: facts.environment,
+    users: facts.users,
+    count: facts.count,
+    firstSeen: facts.firstSeen,
+    regressed: facts.regressed,
+    commits: recent.commits,
+  };
   if (input.report)
     await sendRunNote(input.report, {
       run: input.run,
@@ -1017,8 +1212,10 @@ export async function incidentBrief(
         ...(facts.service ? [`Service: ${facts.service}`] : []),
         ...(facts.release ? [`Release: ${facts.release}`] : []),
         ...(facts.environment ? [`Environment: ${facts.environment}`] : []),
+        ...(impact.length ? [`Impact: ${impact.join(", ")}`] : []),
+        "Rox is reproducing it in a test and working on a fix.",
       ],
       link: input.link ?? facts.link ?? undefined,
     });
-  return facts;
+  return incident;
 }

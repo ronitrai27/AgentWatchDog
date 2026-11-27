@@ -1,7 +1,8 @@
 // Opens the agent's pull request through the Rox GitHub App, like a person pushing a branch.
 // Written so that running it twice (after a crash) finds the branch and the pull request it made
-// the first time instead of making new ones. It never pushes to, or opens a pull request into,
-// the repository's default branch.
+// the first time instead of making new ones. It never pushes to the repository's default branch.
+// It opens a pull request into it only for a Sentry fix (intoDefault), which has no other branch
+// to go to; the fix is still pushed to its own new branch, and merging stays a separate step.
 import { appApi, writeToken } from "../src/github";
 import type { Workspace } from "./workspace";
 
@@ -9,6 +10,8 @@ export type Target = {
   repo: string;
   /** The branch the fix is proposed to: a pull request's own branch, or a lab branch. */
   base: string;
+  /** A Sentry fix: the pull request may go into the default branch (never a push to it). */
+  intoDefault?: boolean;
 };
 
 type Ref = { object: { sha: string } };
@@ -115,7 +118,9 @@ export async function openPullRequest(
 ): Promise<{ url: string; number: number; branch: string; created: boolean }> {
   const { repo, base } = target;
   const token = await writeToken(repo);
-  await guard(repo, base, token);
+  if (!target.intoDefault) await guard(repo, base, token);
+  // The fix's own branch is never the default branch, whatever the target.
+  await guard(repo, fix.branch, token);
   const parent = await refSha(repo, base, token);
   if (!parent) throw new Error(`the branch ${base} does not exist`);
   await commitFiles(repo, token, fix.branch, parent, fix.files, fix.message);

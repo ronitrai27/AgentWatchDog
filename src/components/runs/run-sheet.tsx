@@ -7,10 +7,16 @@ import {
   BoxIcon,
   CheckIcon,
   CircleDashedIcon,
+  ClockIcon,
+  CoinsIcon,
   CopyIcon,
+  CpuIcon,
   ExternalLinkIcon,
+  FlaskConicalIcon,
   GitMergeIcon,
   GitPullRequestIcon,
+  ListTreeIcon,
+  OctagonXIcon,
   PanelRightCloseIcon,
   PanelRightOpenIcon,
   ScaleIcon,
@@ -33,26 +39,32 @@ export type SheetApp = {
   detail: string;
 };
 
-const WIDTH = 460;
+const WIDTH = 520;
+const OPEN_RUN = "rox:open-run";
+
+/** Opens the run sheet on one run, from anywhere on the page (the Runs table's View button). */
+export function openRun(id: string) {
+  window.dispatchEvent(new CustomEvent<string>(OPEN_RUN, { detail: id }));
+}
 const POLL_MS = 4000;
 
 // ---------- small helpers ----------
 
-const money = (usd: number) =>
+export const money = (usd: number) =>
   usd === 0
     ? "$0.00"
     : usd < 0.01
       ? `$${usd.toFixed(4)}`
       : `$${usd.toFixed(2)}`;
 
-const tokens = (n: number) =>
+export const tokens = (n: number) =>
   n >= 1_000_000
     ? `${(n / 1_000_000).toFixed(1)}M`
     : n >= 1000
       ? `${(n / 1000).toFixed(1)}k`
       : String(n);
 
-function duration(ms: number) {
+export function duration(ms: number) {
   const s = Math.max(0, Math.round(ms / 1000));
   const m = Math.floor(s / 60);
   return m ? `${m}m ${String(s % 60).padStart(2, "0")}s` : `${s}s`;
@@ -65,7 +77,7 @@ const clock = (iso: string) =>
     second: "2-digit",
   });
 
-const TRIGGERS: Record<string, string> = {
+export const TRIGGERS: Record<string, string> = {
   "github:pr_main": "PR opened against main",
   "github:failed_ci": "Failed GitHub Actions CI",
   "sentry:new_issue": "Sentry new issue",
@@ -73,7 +85,7 @@ const TRIGGERS: Record<string, string> = {
   "sentry:regression": "Sentry regression",
 };
 
-function invoked(run: RunView) {
+export function invoked(run: RunView) {
   const how =
     run.invokedBy === "webhook"
       ? "Webhook"
@@ -86,28 +98,29 @@ function invoked(run: RunView) {
   return `${how} · ${what}`;
 }
 
-const STATUS: Record<RunView["status"], { label: string; cls: string }> = {
-  running: { label: "Running", cls: "bg-sky-50 text-sky-800 border-sky-200" },
-  paused: {
-    label: "Paused",
-    cls: "bg-amber-50 text-amber-800 border-amber-200",
-  },
-  succeeded: {
-    label: "Finished",
-    cls: "bg-green-50 text-green-800 border-green-200",
-  },
-  failed: { label: "Failed", cls: "bg-red-50 text-red-800 border-red-200" },
-  cancelled: {
-    label: "Cancelled",
-    cls: "bg-neutral-100 text-neutral-700 border-neutral-200",
-  },
-  aborted: {
-    label: "Aborted",
-    cls: "bg-neutral-100 text-neutral-700 border-neutral-200",
-  },
-};
+export const STATUS: Record<RunView["status"], { label: string; cls: string }> =
+  {
+    running: { label: "Running", cls: "bg-sky-50 text-sky-800 border-sky-200" },
+    paused: {
+      label: "Paused",
+      cls: "bg-amber-50 text-amber-800 border-amber-200",
+    },
+    succeeded: {
+      label: "Finished",
+      cls: "bg-green-50 text-green-800 border-green-200",
+    },
+    failed: { label: "Failed", cls: "bg-red-50 text-red-800 border-red-200" },
+    cancelled: {
+      label: "Cancelled",
+      cls: "bg-neutral-100 text-neutral-700 border-neutral-200",
+    },
+    aborted: {
+      label: "Aborted",
+      cls: "bg-neutral-100 text-neutral-700 border-neutral-200",
+    },
+  };
 
-const OUTCOME: Record<string, string> = {
+export const OUTCOME: Record<string, string> = {
   fixed: "Fixed",
   nothing_to_fix: "Nothing to fix",
   gave_up: "Gave up",
@@ -118,7 +131,13 @@ const OUTCOME: Record<string, string> = {
 function actorOf(e: RunEventView): { label: string; icon: ReactNode } {
   const s = e.step;
   const icon = (n: ReactNode) => n;
-  if (e.kind.startsWith("decision.") || s === "scan" || s === "route")
+  if (
+    e.kind.startsWith("decision.") ||
+    s === "scan" ||
+    s === "route" ||
+    s === "assess" ||
+    (s === "reproduce" && e.kind === "decision")
+  )
     return { label: "Decision model", icon: icon(<ScaleIcon />) };
   if (s === "investigate")
     return { label: "Investigator", icon: <SearchIcon /> };
@@ -136,6 +155,11 @@ function actorOf(e: RunEventView): { label: string; icon: ReactNode } {
     return { label: "Agent", icon: <BotIcon /> };
   if (s === "prepare" || s === "install")
     return { label: "Sandbox", icon: <BoxIcon /> };
+  if (e.kind === "run.killed" || e.kind.startsWith("kill."))
+    return { label: "Kill switch", icon: <OctagonXIcon /> };
+  if (s === "incident") return { label: "Sentry", icon: <ActivityIcon /> };
+  if (s === "reproduce")
+    return { label: "Reproducer", icon: <FlaskConicalIcon /> };
   if (s === "run") return { label: "Run", icon: <ActivityIcon /> };
   if (s === "triage" || s === "report")
     return { label: s[0].toUpperCase() + s.slice(1), icon: <SparklesIcon /> };
@@ -153,7 +177,10 @@ const DOT: Record<string, string> = {
 
 // ---------- data ----------
 
-function useOverview() {
+const RUNS_CHANGED = "rox:runs-changed";
+
+/** Is a pipeline run going, and the last few runs. Polls, and reloads at once after a kill. */
+export function useOverview() {
   const [data, setData] = useState<{
     active: RunView | null;
     recent: RunView[];
@@ -172,12 +199,71 @@ function useOverview() {
         .catch(() => {});
     load();
     const t = setInterval(load, POLL_MS);
+    window.addEventListener(RUNS_CHANGED, load);
     return () => {
       gone = true;
       clearInterval(t);
+      window.removeEventListener(RUNS_CHANGED, load);
     };
   }, []);
   return data;
+}
+
+/**
+ * The kill switch: ends the pipeline run now. No pause and no confirm: the run is terminated at
+ * once and its sandbox destroyed; the trace lists what was killed.
+ */
+export function KillSwitch({
+  runId,
+  size = "md",
+}: {
+  runId: string;
+  size?: "sm" | "md";
+}) {
+  const [state, setState] = useState<"idle" | "killing" | "error">("idle");
+  const [problem, setProblem] = useState<string | null>(null);
+  const kill = async () => {
+    setState("killing");
+    setProblem(null);
+    const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/kill`, {
+      method: "POST",
+    }).catch(() => null);
+    const body = (await res?.json().catch(() => null)) as {
+      ok?: boolean;
+      error?: string;
+    } | null;
+    window.dispatchEvent(new Event(RUNS_CHANGED));
+    if (res?.ok || res?.status === 409) return setState("idle");
+    setState("error");
+    setProblem(body?.error ?? "The kill switch could not reach Rox.");
+  };
+  return (
+    <span className="inline-flex items-center gap-2">
+      <button
+        type="button"
+        onClick={kill}
+        disabled={state === "killing"}
+        title={problem ?? "Kill switch: terminate this run now"}
+        className={`focusable inline-flex items-center gap-1.5 rounded-full border border-red-700 bg-red-600 font-semibold text-white shadow-sm hover:bg-red-700 disabled:opacity-60 ${
+          size === "sm" ? "h-8 px-3 text-[12px]" : "h-8 px-3.5 text-[13px]"
+        }`}
+      >
+        <OctagonXIcon className="size-4" aria-hidden="true" />
+        {state === "killing" ? "Killing…" : "Kill switch"}
+      </button>
+      {problem && (
+        <span role="alert" className="text-[11px] text-destructive">
+          {problem}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** The kill switch for the message box: shown only while a pipeline run is going. */
+export function PipelineKillSwitch() {
+  const { active } = useOverview();
+  return active ? <KillSwitch runId={active.id} size="sm" /> : null;
 }
 
 /** One run, live: its row and every event, over SSE. Reconnects where it left off. */
@@ -241,6 +327,14 @@ export function RunSheet({ apps }: { apps: SheetApp[] }) {
   const [open, setOpen] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
   const { active, recent } = useOverview();
+  useEffect(() => {
+    const show = (e: Event) => {
+      setPicked((e as CustomEvent<string>).detail);
+      setOpen(true);
+    };
+    window.addEventListener(OPEN_RUN, show);
+    return () => window.removeEventListener(OPEN_RUN, show);
+  }, []);
   const shown = picked ?? active?.id ?? null;
   const running = Boolean(active);
 
@@ -299,6 +393,7 @@ export function RunSheet({ apps }: { apps: SheetApp[] }) {
               {shown ? "Pipeline run" : "Pipeline"}
             </h2>
           </div>
+          {active && open && <KillSwitch runId={active.id} />}
           <button
             type="button"
             onClick={() => setOpen(false)}
@@ -322,7 +417,9 @@ export function RunSheet({ apps }: { apps: SheetApp[] }) {
 
 function RunDetail({ id }: { id: string }) {
   const { run, events } = useRunStream(id);
-  const [all, setAll] = useState(false);
+  const [tab, setTab] = useState<"steps" | "live">("steps");
+  // Live events: only what arrives while this sheet is open, never the history loaded on open.
+  const [openedAt] = useState(() => Date.now());
   const live = run ? !run.finishedAt : false;
   const now = useNow(live);
   const list = useRef<HTMLDivElement>(null);
@@ -330,12 +427,12 @@ function RunDetail({ id }: { id: string }) {
 
   const visible = useMemo(
     () =>
-      all
-        ? events
+      tab === "live"
+        ? events.filter((e) => Date.parse(e.at) >= openedAt - 1000)
         : events.filter(
             (e) => e.kind !== "model.call" && e.kind !== "tool.call",
           ),
-    [events, all],
+    [events, tab, openedAt],
   );
 
   // Follow new events, unless the reader scrolled up.
@@ -356,7 +453,7 @@ function RunDetail({ id }: { id: string }) {
   const lastStep = [...events]
     .reverse()
     .find((e) => e.kind !== "model.call" && e.kind !== "tool.call");
-  const status = STATUS[run.status];
+  const status = shownStatus(run);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -371,10 +468,11 @@ function RunDetail({ id }: { id: string }) {
               >
                 {run.title ?? run.repo ?? "Pipeline run"}
               </p>
-              <p className="mt-0.5 truncate text-[12px] text-ink/60">
-                {run.repo}
-                {run.pr ? ` · PR #${run.pr}` : ""}
-              </p>
+              {run.pr && (
+                <p className="mt-0.5 truncate text-[12px] font-medium text-ink/75">
+                  PR #{run.pr}
+                </p>
+              )}
             </div>
             <span
               className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${status.cls}`}
@@ -386,14 +484,14 @@ function RunDetail({ id }: { id: string }) {
             </span>
           </div>
 
-          <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[12px]">
+          <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[12px]">
             <Meta label="Run">
               <span className="font-mono">{run.id.slice(0, 8)}</span>
               <button
                 type="button"
                 aria-label="Copy run id"
                 onClick={() => navigator.clipboard?.writeText(run.id)}
-                className="ml-1 text-ink/50 hover:text-ink"
+                className="ml-1 text-ink/65 hover:text-ink"
               >
                 <CopyIcon className="inline size-3" />
               </button>
@@ -407,10 +505,9 @@ function RunDetail({ id }: { id: string }) {
                 second: "2-digit",
               })}
             </Meta>
-            <Meta label="Invoked" wide>
+            <Meta label="Invoked" wide={!run.prAction}>
               {invoked(run)}
             </Meta>
-            {run.model && <Meta label="Model">{run.model}</Meta>}
             {run.prAction && (
               <Meta label="PR action">
                 {run.prAction === "merge_pr" ? "Merge PR" : "Open PR"}
@@ -422,20 +519,30 @@ function RunDetail({ id }: { id: string }) {
         <div className="mt-3 grid grid-cols-4 gap-2">
           <Stat
             label="Cost"
+            icon={<CoinsIcon className="size-3.5 text-ink/75" />}
             value={money(run.costUsd)}
             hint={run.dayBudgetUsd ? `of $${run.dayBudgetUsd}/day` : undefined}
           />
-          <Stat label="Duration" value={duration(ms)} />
+          <Stat
+            label="Duration"
+            icon={<ClockIcon className="size-3.5 text-ink/75" />}
+            value={duration(ms)}
+          />
           <Stat
             label="Tokens"
+            icon={<CpuIcon className="size-3.5 text-ink/75" />}
             value={tokens(run.tokensIn + run.tokensOut)}
             hint={`${run.modelCalls} calls`}
           />
-          <Stat label="Events" value={String(run.lastSeq)} />
+          <Stat
+            label="Events"
+            icon={<ListTreeIcon className="size-3.5 text-ink/75" />}
+            value={String(run.lastSeq)}
+          />
         </div>
 
         {lastStep && live && (
-          <p className="mt-3 flex items-center gap-2 truncate text-[12px] text-ink/70">
+          <p className="mt-3 flex items-center gap-2 truncate text-[12px] text-ink/80">
             <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-sky-500" />
             <span className="font-medium text-ink">
               {actorOf(lastStep).label}:
@@ -444,10 +551,10 @@ function RunDetail({ id }: { id: string }) {
           </p>
         )}
         {!live && (run.outcome || run.reason || run.prUrl) && (
-          <div className="mt-3 space-y-1 text-[12px] text-ink/75">
+          <div className="mt-3 space-y-1 text-[12px] text-ink/85">
             {run.outcome && (
               <p>
-                <span className="font-medium text-ink">Outcome:</span>{" "}
+                <span className="font-semibold text-ink">Outcome:</span>{" "}
                 {OUTCOME[run.outcome] ?? run.outcome}
               </p>
             )}
@@ -469,17 +576,25 @@ function RunDetail({ id }: { id: string }) {
 
       {/* Timeline */}
       <div className="flex shrink-0 items-center justify-between px-5 pt-3 pb-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-ink/55">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-ink/85">
           Progress
         </p>
         <div className="flex rounded-md border border-ink/15 p-0.5 text-[11px]">
-          {(["Key steps", "Everything"] as const).map((label, i) => (
+          {(
+            [
+              ["steps", "Key steps"],
+              ["live", "Live events"],
+            ] as const
+          ).map(([id, label]) => (
             <button
-              key={label}
+              key={id}
               type="button"
-              onClick={() => setAll(i === 1)}
-              className={`rounded px-2 py-0.5 ${all === (i === 1) ? "bg-ink text-white" : "text-ink/70 hover:text-ink"}`}
+              onClick={() => setTab(id)}
+              className={`flex items-center gap-1 rounded px-2 py-0.5 ${tab === id ? "bg-ink text-white" : "text-ink/70 hover:text-ink"}`}
             >
+              {id === "live" && live && (
+                <span className="size-1.5 animate-pulse rounded-full bg-red-500" />
+              )}
               {label}
             </button>
           ))}
@@ -495,8 +610,18 @@ function RunDetail({ id }: { id: string }) {
       >
         {visible.length === 0 ? (
           <p className="py-6 text-center text-[12px] text-ink/55">
-            Waiting for the first step…
+            {tab === "steps"
+              ? "Waiting for the first step…"
+              : live
+                ? "Listening… every agent step, model call and tool call shows here the moment it happens."
+                : "This run is not running, so no live events arrive. Key steps has its full trace."}
           </p>
+        ) : tab === "live" ? (
+          <ol className="space-y-1 font-mono text-[11.5px]">
+            {visible.map((e) => (
+              <LiveRow key={e.seq} e={e} />
+            ))}
+          </ol>
         ) : (
           <ol className="relative">
             {visible.map((e, i) => (
@@ -506,6 +631,49 @@ function RunDetail({ id }: { id: string }) {
         )}
       </div>
     </div>
+  );
+}
+
+/** The status to show: a run whose agent gave up or hit trouble did not succeed. */
+export function shownStatus(run: RunView): { label: string; cls: string } {
+  if (run.status === "succeeded" && run.outcome === "gave_up")
+    return { label: "Gave up", cls: "bg-red-50 text-red-800 border-red-200" };
+  if (run.status === "succeeded" && run.outcome === "infra")
+    return {
+      label: "Stopped",
+      cls: "bg-amber-50 text-amber-800 border-amber-200",
+    };
+  return STATUS[run.status];
+}
+
+const preciseClock = (iso: string) => {
+  const d = new Date(iso);
+  return `${d.toLocaleTimeString([], { hour12: false })}.${String(d.getMilliseconds()).padStart(3, "0")}`;
+};
+
+/** One live event: when, which agent, what it did. */
+function LiveRow({ e }: { e: RunEventView }) {
+  const actor = actorOf(e);
+  const d = e.data ?? {};
+  const what =
+    e.kind === "model.call"
+      ? `model call ${String(d.model ?? "")} · ${tokens(Number(d.in ?? 0))} in · ${tokens(Number(d.out ?? 0))} out · ${money(Number(d.usd ?? 0))}`
+      : e.title;
+  return (
+    <li className="flex gap-2 rounded-md px-1.5 py-1 hover:bg-paper">
+      <span className="shrink-0 text-ink/45">{preciseClock(e.at)}</span>
+      <span
+        className={`size-1.5 shrink-0 translate-y-1.5 rounded-full ${e.status ? (DOT[e.status] ?? "bg-ink/40") : "bg-ink/25"}`}
+      />
+      <span className="w-24 shrink-0 truncate font-sans font-semibold text-ink">
+        {actor.label}
+      </span>
+      <span className="min-w-0 flex-1 break-words text-ink/80">
+        <span className="text-ink/45">{e.kind} </span>
+        {what.slice(0, 300)}
+        {e.ms ? <span className="text-ink/45"> · {duration(e.ms)}</span> : null}
+      </span>
+    </li>
   );
 }
 
@@ -535,7 +703,11 @@ function EventRow({ e, last }: { e: RunEventView; last: boolean }) {
       >
         {e.status ? (
           <span
-            className={`size-2 rounded-full ${DOT[e.status] ?? "bg-ink/40"}`}
+            className={`size-2 rounded-full ${
+              e.kind.startsWith("kill.") || e.kind === "run.killed"
+                ? "bg-red-600"
+                : (DOT[e.status] ?? "bg-ink/40")
+            }`}
           />
         ) : (
           actor.icon
@@ -594,28 +766,37 @@ function Meta({
 }) {
   return (
     <div className={`min-w-0 ${wide ? "col-span-2" : ""}`}>
-      <dt className="text-[10.5px] uppercase tracking-wider text-ink/50">
+      <dt className="text-[10.5px] font-semibold uppercase tracking-wider text-ink/80">
         {label}
       </dt>
-      <dd className="truncate text-ink">{children}</dd>
+      <dd className="truncate font-medium text-ink">{children}</dd>
     </div>
   );
 }
 
 function Stat({
   label,
+  icon,
   value,
   hint,
 }: {
   label: string;
+  icon: ReactNode;
   value: string;
   hint?: string;
 }) {
   return (
-    <div className="rounded-lg border border-ink/12 px-2.5 py-2">
-      <p className="text-[10.5px] text-ink/55">{label}</p>
-      <p className="text-[14px] font-semibold tabular-nums text-ink">{value}</p>
-      {hint && <p className="truncate text-[10px] text-ink/45">{hint}</p>}
+    <div className="rounded-sm border border-ink/20 bg-white px-2.5 py-2">
+      <div className="flex items-center justify-between gap-1">
+        <p className="text-[11px] font-semibold text-ink/85">{label}</p>
+        {icon}
+      </div>
+      <p className="mt-1 text-[14px] font-semibold tabular-nums text-ink">
+        {value}
+      </p>
+      {hint && (
+        <p className="truncate text-[10.5px] font-medium text-ink/70">{hint}</p>
+      )}
     </div>
   );
 }
@@ -645,7 +826,7 @@ function Empty({
       </div>
 
       <section className="mt-7">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-ink/55">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-ink/85">
           Connected apps
         </p>
         <ul className="mt-2 divide-y divide-ink/10 rounded-xl border border-ink/15">
@@ -692,7 +873,7 @@ function Empty({
 
       {recent.length > 0 && (
         <section className="mt-6">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-ink/55">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-ink/85">
             Recent runs
           </p>
           <ul className="mt-2 space-y-1.5">

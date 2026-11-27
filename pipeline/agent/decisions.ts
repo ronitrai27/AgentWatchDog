@@ -237,6 +237,47 @@ export const ROUTE_QUESTIONS: Question[] = [
 /** Below this the router's choice is not trusted and the old route (investigate) is taken. */
 export const ROUTE_MIN_P = 0.6;
 
+/** Sentry incidents, before any agent runs: is this a bug the code can fix? */
+export const INCIDENT_QUESTIONS: Question[] = [
+  {
+    type: "choice",
+    name: "incident_kind",
+    instructions:
+      "A production error was reported by Sentry, with its stack trace. Decide whether it is a bug in the application's own code that a code change can fix.",
+    choices: [
+      {
+        value: "code_bug",
+        description:
+          "The stack trace points into the application's own code and the error comes from its logic (a null or undefined access, a wrong type, a bad calculation, an unhandled case).",
+      },
+      {
+        value: "outside_code",
+        description:
+          "The cause is outside the code: a third-party service or network outage, a timeout from another system, missing or wrong environment variables or secrets, bad production data, the infrastructure, or the browser or a browser extension.",
+      },
+      {
+        value: "unclear",
+        description:
+          "There is not enough information (no stack trace, only framework or vendor frames, a generic message) to tell where the error comes from.",
+      },
+    ],
+  },
+];
+/** A stop needs this much certainty; anything less goes on to the Reproducer. */
+export const INCIDENT_STOP_P = 0.7;
+
+/** After the Reproducer: does its failing test fail with the error Sentry reported? */
+export const SAME_ERROR_QUESTIONS: Question[] = [
+  {
+    type: "predicate",
+    name: "same_error",
+    instructions:
+      "Compare the production error from Sentry with the failure of a new test. True when the test fails with the same kind of error (same exception type and essentially the same message) coming from the same function or code path. False when it fails for another reason: a different error, a typo or import problem in the test, or an assertion about something unrelated.",
+  },
+];
+/** Below this the reproduction is not trusted and the Reproducer tries again. */
+export const SAME_ERROR_MIN_P = 0.6;
+
 /** Text in the repository or the failure that tries to steer an AI agent. */
 export const INJECTION_QUESTIONS: Question[] = [
   {

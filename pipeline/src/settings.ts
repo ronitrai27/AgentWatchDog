@@ -115,6 +115,9 @@ export async function runModels(
             maxTokens,
             timeout: 45_000,
             maxRetries: 0, // modelRetryMiddleware decides, so every try is visible.
+            // GPT-5/6 reasoning models refuse tools together with reasoning on Chat Completions
+            // ("use /v1/responses"); every sub-agent has tools, so they go through the Responses API.
+            useResponsesApi: true,
             // One tool call at a time: two edits of one file must never race.
             modelKwargs: { parallel_tool_calls: false },
           })

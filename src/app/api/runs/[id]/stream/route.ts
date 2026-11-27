@@ -43,6 +43,8 @@ export async function GET(
           );
       };
       let last = "";
+      // After the run ends, keep listening a little: a kill's cleanup lines arrive just after.
+      let quietTicks = 0;
       try {
         while (!stopped) {
           const run = await getRun(session.uid, id);
@@ -53,7 +55,11 @@ export async function GET(
           const events = await runEvents(session.uid, id, after);
           for (const e of events) send("event", e);
           if (events.length) after = events[events.length - 1].seq;
-          if (run.finishedAt && events.length === 0) {
+          quietTicks = events.length ? 0 : quietTicks + 1;
+          const ago = run.finishedAt
+            ? Date.now() - new Date(run.finishedAt).getTime()
+            : 0;
+          if (run.finishedAt && quietTicks >= 1 && ago > 15_000) {
             send("end", {});
             break;
           }

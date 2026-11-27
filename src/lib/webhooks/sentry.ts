@@ -1,13 +1,19 @@
-// Sentry webhooks: what arrived and what Rox would do with it. For now it only prints to the
-// console; starting a run comes later (startIncidentRun in src/lib/rox-runs.ts).
+// Sentry webhooks: what arrived and what Rox does with it. When the user turned the trigger on in
+// Settings > Workflow, it starts the pipeline run (startIncidentRun in src/lib/rox-runs.ts).
 // One file per source lives in this folder (sentry now, vercel/grafana/betterstack later).
 import { decideSentry } from "@agent/integrations/sentry";
 import { db } from "@/lib/db";
+import { reportTarget } from "@/lib/report-connections";
+import { startIncidentRun } from "@/lib/rox-runs";
 
-/** The Rox user who connected this Sentry project, with the triggers they turned on. */
+/** The Rox user who connected this Sentry project: triggers they turned on and their repo. */
 async function owner(projectId: string) {
-  const { rows } = await db().query<{ user_id: string; triggers: string[] }>(
-    "SELECT user_id, triggers FROM user_setup WHERE sentry_project_id = $1",
+  const { rows } = await db().query<{
+    user_id: string;
+    triggers: string[];
+    repo: string | null;
+  }>(
+    "SELECT user_id, triggers, repo FROM user_setup WHERE sentry_project_id = $1",
     [projectId],
   );
   return rows[0] ?? null;
@@ -74,10 +80,50 @@ export async function logSentryWebhook(
           !user
             ? `none: no Rox user connected Sentry project ${incident.projectId}`
             : on
-              ? `${user.user_id.slice(0, 8)}, trigger is ON (would wake Rox)`
+              ? `${user.user_id.slice(0, 8)}, trigger is ON: starting Rox`
               : `${user.user_id.slice(0, 8)}, ${incident.trigger} is OFF in Settings > Workflow`,
         )
       : null,
   ].filter(Boolean);
   console.log(`\n${lines.join("\n")}\n`);
+
+  if (!incident || !user || !on) return;
+  if (!user.repo) {
+    console.warn(
+      `[sentry] not starting Rox: user ${user.user_id.slice(0, 8)} has no repository chosen`,
+    );
+    return;
+  }
+  // Not awaited: Sentry gets its answer at once; the run goes on in Temporal. The repository is
+  // the user's own choice, never something from the event.
+  const userId = user.user_id;
+  const repo = user.repo;
+  void reportTarget(userId)
+    .catch(() => null)
+    .then((report) =>
+      startIncidentRun({
+        repo,
+        trigger: incident.trigger,
+        why: incident.why,
+        issueId: incident.issueId,
+        projectId: incident.projectId,
+        title: incident.title,
+        link: incident.link,
+        report,
+        userId,
+        eventId: headers.get("request-id"),
+      }),
+    )
+    .then(
+      (s) =>
+        console.log(
+          s.started
+            ? `[sentry] started Rox for issue ${incident.issueId}: ${s.workflowId}`
+            : `[sentry] a run for issue ${incident.issueId} is already going (${s.workflowId}); nothing new started`,
+        ),
+      (error) =>
+        console.error(
+          `[sentry] could not start Rox for issue ${incident.issueId} (are Temporal and pnpm temporal:worker running?): ${error instanceof Error ? error.message : error}`,
+        ),
+    );
 }

@@ -129,6 +129,18 @@ export async function runsOverview(
   };
 }
 
+/** Every run of this user, newest first (the Runs page). */
+export async function listRuns(
+  userId: string,
+  limit = 500,
+): Promise<RunView[]> {
+  const { rows } = await db().query<Row>(
+    `SELECT ${COLUMNS} FROM runs WHERE user_id = $1 ORDER BY started_at DESC LIMIT $2`,
+    [userId, limit],
+  );
+  return rows.map(view);
+}
+
 export async function getRun(
   userId: string,
   runId: string,
@@ -138,6 +150,31 @@ export async function getRun(
     [userId, runId],
   );
   return rows[0] ? view(rows[0]) : null;
+}
+
+/**
+ * The kill switch was pressed: the run ends as cancelled now, and its trace says so first. The
+ * worker's cleanup then adds a line for each container, network and volume it kills. Returns
+ * false when the run had already ended.
+ */
+export async function markKilled(
+  userId: string,
+  runId: string,
+  title: string,
+): Promise<boolean> {
+  const { rowCount } = await db().query(
+    `WITH r AS (
+       UPDATE runs SET status = 'cancelled', reason = $3, finished_at = now(),
+              duration_ms = (extract(epoch from now() - started_at) * 1000)::bigint,
+              last_seq = last_seq + 1
+        WHERE run_id = $2 AND user_id = $1 AND finished_at IS NULL
+        RETURNING last_seq
+     )
+     INSERT INTO run_events (run_id, seq, step, kind, title, status)
+     SELECT $2, last_seq, 'run', 'run.killed', $3, 'cancelled' FROM r`,
+    [userId, runId, title],
+  );
+  return (rowCount ?? 0) > 0;
 }
 
 /** The run's events after `after`, in order. Only for a run of this user. */

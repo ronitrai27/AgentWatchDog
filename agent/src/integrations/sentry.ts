@@ -181,7 +181,26 @@ export type IncidentFacts = {
   exception: string | null;
   /** The innermost in-app frame: where the code broke. */
   frame: string | null;
+  /** The file of that frame, as Sentry names it (often a path inside the repository). */
+  file: string | null;
+  /** In-app frames, innermost first (at most 8), each "file:line in function" and its code line. */
+  stack: string[];
+  /** How bad: events and users so far, when it was first and last seen. Null when not known. */
+  count: number | null;
+  users: number | null;
+  firstSeen: string | null;
+  lastSeen: string | null;
+  /** Sentry marked the issue as a regression (it was resolved and came back). */
+  regressed: boolean;
   link: string | null;
+};
+
+type IssueDetails = {
+  count?: string | number;
+  userCount?: number;
+  firstSeen?: string;
+  lastSeen?: string;
+  substatus?: string;
 };
 
 type LatestEvent = {
@@ -200,6 +219,7 @@ type LatestEvent = {
             function?: string;
             lineNo?: number;
             inApp?: boolean;
+            context?: [number, string][];
           }[];
         } | null;
       }[];
@@ -213,18 +233,42 @@ export async function incidentFacts(
   issueId: string,
   signal?: AbortSignal,
 ): Promise<IncidentFacts> {
-  const e = await call<LatestEvent>(
-    s,
-    `/organizations/${s.org}/issues/${issueId}/events/latest/`,
-    signal,
-  );
+  const [e, issue] = await Promise.all([
+    call<LatestEvent>(
+      s,
+      `/organizations/${s.org}/issues/${issueId}/events/latest/`,
+      signal,
+    ),
+    // How bad it is; the run goes on without it.
+    call<IssueDetails>(
+      s,
+      `/organizations/${s.org}/issues/${issueId}/`,
+      signal,
+    ).catch(() => ({}) as IssueDetails),
+  ]);
   const tag = (k: string) => e.tags?.find((t) => t.key === k)?.value ?? null;
   const exc = e.entries
     ?.find((x) => x.type === "exception")
     ?.data?.values?.at(-1);
   const frames = exc?.stacktrace?.frames ?? [];
   const top = [...frames].reverse().find((f) => f.inApp) ?? frames.at(-1);
+  const inApp = [...frames].reverse().filter((f) => f.inApp);
+  const stack = (inApp.length ? inApp : [...frames].reverse())
+    .slice(0, 8)
+    .map((f) => {
+      const code = f.context?.find(([n]) => n === f.lineNo)?.[1]?.trim();
+      return `${f.filename ?? "?"}:${f.lineNo ?? "?"} in ${f.function ?? "?"}${code ? `\n    ${code.slice(0, 200)}` : ""}`;
+    });
+  const num = (v: unknown) =>
+    v === undefined || v === null || Number.isNaN(Number(v)) ? null : Number(v);
   return {
+    file: top?.filename ?? null,
+    stack,
+    count: num(issue.count),
+    users: num(issue.userCount),
+    firstSeen: issue.firstSeen ?? null,
+    lastSeen: issue.lastSeen ?? null,
+    regressed: issue.substatus === "regressed",
     title: e.title ?? "Untitled issue",
     level: tag("level"),
     release: e.release?.version ?? tag("release"),

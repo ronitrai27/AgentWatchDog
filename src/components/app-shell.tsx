@@ -99,7 +99,6 @@ const NAV: Item[] = [
     label: "Runs",
     href: "/home/runs",
     icon: glyph("M3 12h4l3-8 4 16 3-8h4"),
-    soon: true,
   },
   {
     label: "Connections",
@@ -158,6 +157,7 @@ function Sidebar({
   repo: string | null;
   onNavigate?: () => void;
 }) {
+  const pathname = usePathname();
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center border-b border-ink/20 px-2">
@@ -189,7 +189,15 @@ function Sidebar({
       </div>
 
       <nav aria-label="Account" className="p-2">
-        <NavLink item={SETTINGS} onNavigate={onNavigate} />
+        <Link
+          href={SETTINGS.href}
+          onClick={onNavigate}
+          aria-current={pathname === SETTINGS.href ? "page" : undefined}
+          className="focusable flex h-8 w-full items-center justify-center gap-2 rounded mode-button  px-3 text-center text-sm  text-white transition-colors hover:bg-green-900"
+        >
+          {SETTINGS.icon}
+          {SETTINGS.label}
+        </Link>
       </nav>
 
       <div className="flex items-center gap-2.5 border-t border-ink/30  px-4 py-3">

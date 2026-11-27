@@ -10,6 +10,7 @@ import {
   buildGraph,
   type FixContext,
   type FixState,
+  type Incident,
   type Publisher,
 } from "./graph";
 import { type RunModels, Spend } from "./spend";
@@ -20,7 +21,13 @@ export type FixResult = Pick<
 > & { usd: number; tokens: number; modelCalls: number; resumed: boolean };
 
 export async function runFix(
-  input: { run: string; workspaces: string[]; change?: string },
+  input: {
+    run: string;
+    workspaces: string[];
+    change?: string;
+    /** A Sentry incident: the run starts by reproducing it. */
+    incident?: Incident | null;
+  },
   deps: Pick<FixContext, "workspace" | "fresh">,
   options: {
     checkpointer: BaseCheckpointSaver;
@@ -55,7 +62,8 @@ export async function runFix(
       ...deps,
     } satisfies FixContext,
     durability: "sync" as const,
-    recursionLimit: 30,
+    // Sentry runs add assess and up to 3 reproduce steps.
+    recursionLimit: 40,
     signal: options.signal,
   };
   const saved = await graph.getState({ configurable: { thread_id: run } });
@@ -70,7 +78,13 @@ export async function runFix(
   if (!finished) {
     let t = Date.now();
     const stream = await graph.stream(
-      resumed ? null : { workspaces, change: input.change ?? "" },
+      resumed
+        ? null
+        : {
+            workspaces,
+            change: input.change ?? "",
+            incident: input.incident ?? null,
+          },
       {
         ...config,
         streamMode: "updates",

@@ -16,7 +16,6 @@ import {
   sleep,
   workflowInfo,
 } from "@temporalio/workflow";
-import type { IncidentFacts } from "../../agent/src/integrations/sentry";
 import type { FixResult } from "../agent/run";
 import type { CheckResult } from "../src/checks";
 // Only types are imported: workflow code runs in Temporal's deterministic sandbox.
@@ -64,6 +63,10 @@ export type LabStart = Omit<LabInput, "run" | "workflowId"> & {
   prBranch?: string;
   /** Where the agent's final report goes. */
   report?: FixInput["report"];
+  /** The default branch a Sentry fix's pull request goes into. */
+  baseBranch?: string;
+  /** Set when a Sentry incident started the run: its facts are read and traced first. */
+  incident?: Omit<activities.IncidentInput, "run" | "repo" | "report">;
 };
 
 export async function labChecks(start: LabStart): Promise<CheckResult[]> {
@@ -170,6 +173,20 @@ export async function labChecks(start: LabStart): Promise<CheckResult[]> {
             return null;
           }
         };
+        // A Sentry incident: what broke, read from Sentry, before the checks.
+        const incident = start.incident;
+        const brief = incident
+          ? await soft(() =>
+              pausable("sentry incident", () =>
+                steps.incidentBrief({
+                  ...incident,
+                  run: input.run,
+                  repo: input.repo,
+                  report: start.report ?? null,
+                }),
+              ),
+            )
+          : null;
         if (agent2) {
           const gate = await soft(() =>
             pausable("language gate", () => steps.agent2Gate(input)),
@@ -226,10 +243,11 @@ export async function labChecks(start: LabStart): Promise<CheckResult[]> {
           );
         const failed = (id: string) =>
           results.some((r) => r.id === id && r.status === "fail");
+        // A Sentry error is fixed even when every check passes: production broke, not the tests.
         const fixing =
           start.fix &&
           installed.head &&
-          (failed("test") || failed("typecheck"));
+          (Boolean(brief) || failed("test") || failed("typecheck"));
         // Without a fix run, the agent does not report; the run says how it ended instead.
         if (!fixing && start.report)
           await steps.labNote(
@@ -253,6 +271,7 @@ export async function labChecks(start: LabStart): Promise<CheckResult[]> {
               base: input.base,
               report: start.report,
               settings,
+              incident: brief,
               ...(start.prBranch
                 ? {
                     publish: {
@@ -261,7 +280,15 @@ export async function labChecks(start: LabStart): Promise<CheckResult[]> {
                       branch: start.prBranch,
                     },
                   }
-                : {}),
+                : brief && start.baseBranch
+                  ? {
+                      publish: {
+                        repo: input.repo,
+                        kind: "incident" as const,
+                        base: start.baseBranch,
+                      },
+                    }
+                  : {}),
             }),
           );
         step = "finishing";
@@ -369,14 +396,40 @@ export async function labAbort(state: RunState, why: string): Promise<void> {
       .catch(() => {});
 }
 
+/** What the Sentry webhook starts a run with (src/lib/rox-runs.ts startIncidentRun). */
+export type IncidentStart = Omit<activities.IncidentInput, "run" | "repo"> & {
+  repo: string;
+  userId: string;
+  eventId: string | null;
+};
+
 /**
  * A Sentry incident (new issue, error spike or regression). One workflow per issue, so a burst of
- * alerts for the same issue never starts a second run. Today it gathers the facts from Sentry and
- * reports them; the investigate-and-fix steps come next.
+ * alerts for the same issue never starts a second run. Runs the same pipeline as a pull request,
+ * on the head of the repository's default branch, with the incident's facts traced first.
  */
 export async function incidentRun(
-  input: Omit<activities.IncidentInput, "run">,
-): Promise<IncidentFacts> {
-  const { runId } = workflowInfo();
-  return steps.incidentBrief({ ...input, run: runId });
+  input: IncidentStart,
+): Promise<CheckResult[]> {
+  const { userId, eventId, repo, report, ...incident } = input;
+  const head = await steps.incidentHead(repo);
+  return labChecks({
+    repo,
+    head: head.sha,
+    base: null,
+    pr: null,
+    title: `Sentry: ${input.title}`,
+    profile: "fast",
+    fix: true,
+    baseBranch: head.branch,
+    origin: {
+      source: "sentry",
+      trigger: input.trigger,
+      invokedBy: "webhook",
+      eventId: eventId ?? input.issueId,
+      userId,
+    },
+    ...(report ? { report } : {}),
+    incident,
+  });
 }

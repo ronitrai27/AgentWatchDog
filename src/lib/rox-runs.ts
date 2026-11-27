@@ -82,7 +82,8 @@ export async function startPrRun(
 }
 
 export type IncidentRun = {
-  repo: string | null;
+  /** The repository the user chose; the pipeline checks out its default branch. */
+  repo: string;
   trigger: string;
   why: string;
   issueId: string;
@@ -90,11 +91,16 @@ export type IncidentRun = {
   title: string;
   link: string | null;
   report: ReportTarget | null;
+  /** The Rox user who connected this Sentry project. */
+  userId: string;
+  /** The Sentry request that woke Rox, recorded in the runs table. */
+  eventId: string | null;
 };
 
 /**
- * Starts Rox's run for a Sentry incident. One workflow id per issue: while a run for the issue is
- * still going, more alerts for it start nothing (started: false).
+ * Starts Rox's pipeline run for a Sentry incident: the same pipeline as a pull request, on the
+ * repository's default branch, recorded in `runs` with source sentry. One workflow id per issue:
+ * while a run for the issue is still going, more alerts for it start nothing (started: false).
  */
 export async function startIncidentRun(
   r: IncidentRun,
@@ -117,6 +123,40 @@ export async function startIncidentRun(
         return { workflowId, started: false };
       throw error;
     }
+  } finally {
+    await connection.close();
+  }
+}
+
+/**
+ * The kill switch (run sheet and message box). Terminates the run in Temporal at once, without
+ * asking it where it is or waiting for any step, then the worker's cleanup kills its containers.
+ */
+export async function killPipelineRun(r: {
+  workflowId: string;
+  runId: string;
+  repo: string | null;
+  pr: number | null;
+  report: ReportTarget | null;
+  why: string;
+}): Promise<boolean> {
+  const { killRun } = await import("../../pipeline/temporal/control");
+  const connection = await Connection.connect({ address: ADDRESS });
+  try {
+    const client = new Client({ connection, namespace: NAMESPACE });
+    return await killRun(
+      client,
+      r.workflowId,
+      {
+        run: r.runId,
+        repo: r.repo ?? "",
+        pr: r.pr,
+        step: "unknown",
+        paused: false,
+        report: r.report,
+      },
+      r.why,
+    );
   } finally {
     await connection.close();
   }

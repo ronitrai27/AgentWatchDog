@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  ArrowUpIcon,
-  MicIcon,
-  OctagonXIcon,
-  PauseIcon,
-  SquareIcon,
-} from "lucide-react";
+import { ArrowUpIcon, MicIcon, SquareIcon } from "lucide-react";
 import {
   type ReactNode,
   useCallback,
@@ -14,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { PipelineKillSwitch } from "@/components/runs/run-sheet";
 import { Brand } from "@/components/setup/brand";
 import {
   InputGroup,
@@ -107,59 +102,10 @@ function useDictation(onText: (text: string) => void) {
   return { supported, listening, problem, toggle };
 }
 
-/** The controls of a test run in the sandbox (checks, fix, verify), when one is going. */
-export type TestRunControls = {
-  onPause: () => void;
-  onKill: () => void;
-};
-
-/** Pause and kill: shown while Rox works, usable only during a test run, not in plain chat. */
-function RunButtons({ run }: { run: TestRunControls | null }) {
-  const off = "Only while Rox is testing or fixing a pull request";
-  const buttons = [
-    {
-      label: "Pause",
-      icon: <PauseIcon />,
-      tip: run
-        ? "Pause the run: the current step stops, the sandbox and progress are kept"
-        : off,
-      onClick: run?.onPause,
-      className: "",
-    },
-    {
-      label: "Kill switch",
-      icon: <OctagonXIcon />,
-      tip: run
-        ? "Kill switch: stop everything now and destroy the sandbox"
-        : off,
-      onClick: run?.onKill,
-      className: run ? "text-destructive hover:bg-destructive/10" : "",
-    },
-  ];
-  return buttons.map((b) => (
-    <Tooltip key={b.label}>
-      <TooltipTrigger
-        render={
-          <InputGroupButton
-            size="icon-sm"
-            aria-label={b.label}
-            aria-disabled={!run}
-            onClick={() => run && b.onClick?.()}
-            className={run ? b.className : "cursor-not-allowed opacity-40"}
-          />
-        }
-      >
-        {b.icon}
-      </TooltipTrigger>
-      <TooltipContent>{b.tip}</TooltipContent>
-    </Tooltip>
-  ));
-}
-
 /**
  * The message box. Under the text: the model that answers (its logo), a microphone to dictate,
- * and send. While Rox is working, send becomes stop, next to pause and the kill switch (usable
- * only during a test run). There is no upload button.
+ * and send. While Rox is working, send becomes stop. While a pipeline run is going, the kill switch
+ * shows too. There is no upload button.
  */
 export function Composer({
   value,
@@ -173,7 +119,6 @@ export function Composer({
   helperId,
   focusSignal,
   leading,
-  testRun = null,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -188,8 +133,6 @@ export function Composer({
   focusSignal: number;
   /** Shown at the bottom left, for example the connectors. */
   leading?: ReactNode;
-  /** Set while a test run is going; without it pause and kill are shown but disabled. */
-  testRun?: TestRunControls | null;
 }) {
   const area = useRef<HTMLTextAreaElement>(null);
   const main = findModel(modelId);
@@ -301,7 +244,7 @@ export function Composer({
               </TooltipContent>
             </Tooltip>
 
-            {running && <RunButtons run={testRun} />}
+            <PipelineKillSwitch />
 
             {running ? (
               <Tooltip>

@@ -58,6 +58,36 @@ export async function resumeRun(
   return stateOf(r.handle);
 }
 
+/**
+ * The UI's kill switch: terminates this exact run at once (no query, nothing is waited for), then
+ * starts the cleanup that kills its containers and lists each one in the trace. Returns false
+ * when Temporal had already ended the run.
+ */
+export async function killRun(
+  client: Client,
+  workflowId: string,
+  state: RunState,
+  why: string,
+): Promise<boolean> {
+  let terminated = true;
+  try {
+    await client.workflow
+      .getHandle(workflowId, state.run)
+      .terminate(`killed: ${why}`);
+  } catch (error) {
+    if (!(error instanceof WorkflowNotFoundError)) throw error;
+    terminated = false;
+  }
+  // Cleanup runs even when the workflow was already gone: its sandbox may still be there.
+  await client.workflow.start("labAbort", {
+    taskQueue: TASK_QUEUE,
+    workflowId: `abort:${state.run}`,
+    workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE,
+    args: [state, why],
+  });
+  return terminated;
+}
+
 /** The kill switch. Returns where the run was, or null when nothing was running. */
 export async function abortRun(
   client: Client,

@@ -122,6 +122,69 @@ export const editFile = tool(
   },
 );
 
+/** Where a test file of a workspace lives in the repository ("." is the root workspace). */
+export const testPath = (workspace: string, file: string) =>
+  workspace === "." ? file : `${workspace}/${file}`;
+
+/**
+ * The Reproducer's only write: one NEW test file. Checked here, on the host: inside a test
+ * workspace, a test file name, never a file the repository already has. It cannot touch source.
+ */
+export const writeTest = tool(
+  async ({ workspace, file, content }, rt: Run) => {
+    const { ws, workspaces } = rt.context;
+    if (!workspaces.includes(workspace))
+      return `REFUSED: workspace must be one of ${workspaces.join(", ")}`;
+    const clean = file
+      .replaceAll("\\", "/")
+      .replace(/^\.?\//, "")
+      .replace(workspace === "." ? /^$/ : `${workspace}/`, "");
+    if (
+      clean.includes("..") ||
+      clean.startsWith("-") ||
+      !/^[\w./-]+\.(test|spec)\.(ts|tsx|js|mjs)$/.test(clean)
+    )
+      return 'REFUSED: file must be a new test file path inside the workspace, such as "src/rox-repro.test.ts"';
+    const path = testPath(workspace, clean);
+    const tracked = await ws.exec([
+      "git",
+      "-C",
+      ws.root,
+      "ls-files",
+      "--error-unmatch",
+      "--",
+      path,
+    ]);
+    if (tracked.code === 0)
+      return `REFUSED: ${path} already exists in the repository. Write a new file instead.`;
+    const r = await ws.exec(
+      [
+        "sh",
+        "-c",
+        'mkdir -p "$(dirname "$1")" && cat > "$1"',
+        "sh",
+        `${ws.root}/${path}`,
+      ],
+      content,
+    );
+    if (r.code !== 0)
+      return `REFUSED: could not write ${path}: ${r.stderr.slice(0, 200)}`;
+    return `Wrote ${path}. Run it: run_tests with workspace "${workspace}" and files ["${clean}"].`;
+  },
+  {
+    name: "write_test",
+    description:
+      "Create (or rewrite) your one new test file. The whole file content each time. Existing files cannot be changed.",
+    schema: z.object({
+      workspace: z.string().describe('Such as "apps/api"'),
+      file: z
+        .string()
+        .describe('Path inside the workspace, such as "src/rox-repro.test.ts"'),
+      content: z.string().max(20_000),
+    }),
+  },
+);
+
 /**
  * U5: the read tools. `search_code` is Agent_2's upgraded search (regex, word, glob, context,
  * every JS/TS extension); find_symbol, outline_file, find_references and reach come from the code
@@ -130,3 +193,5 @@ export const editFile = tool(
 export const READ_TOOLS = [listFiles, readFile, ...CODE_TOOLS];
 void searchCode;
 export const ENGINEER_TOOLS = [...READ_TOOLS, editFile, runTests];
+/** Reads the code, writes one new test, runs it. No edit of anything that exists. */
+export const REPRODUCER_TOOLS = [...READ_TOOLS, writeTest, runTests];
