@@ -15,7 +15,8 @@
     "agent2:proof:gates": "tsx Agent_2/proof-gates.ts",
     "agent2:proof:loops": "tsx Agent_2/proof-loops.ts",
     "agent2:eval": "tsx Agent_2/eval.ts",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "agent2:analyze": "tsx Agent_2/analyze-cli.ts"
   },
   "dependencies": {
     "@langchain/core": "^1.5.1",

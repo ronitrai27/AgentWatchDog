@@ -140,12 +140,52 @@ export async function labChecks(start: LabStart): Promise<CheckResult[]> {
   };
 
   try {
-    const { plan, facts } = await pausable("get the code", () =>
+    const { plan: sharedPlan, facts } = await pausable("get the code", () =>
       steps.labPrepare(input),
     );
+    // Agent_2 steps may fail without taking the run down: a failure means the safe fallback.
+    // A cancel or pause still stops the run.
+    const agent2 = start.agent === 2;
+    const soft = async <T>(work: () => Promise<T>): Promise<T | null> => {
+      try {
+        return await work();
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+        return null;
+      }
+    };
+    if (agent2) {
+      const gate = await soft(() =>
+        pausable("language gate", () => steps.agent2Gate(input)),
+      );
+      if (gate && !gate.ok) {
+        await steps.agent2Stop(
+          input,
+          gate.message ?? "Rox stopped: unsupported language",
+          start.report ?? null,
+        );
+        step = "finishing";
+        await steps.labFinish(input, results, "completed", null);
+        return results;
+      }
+    }
     const installed = await pausable("install", () =>
       steps.labInstall(input, facts),
     );
+    let plan = sharedPlan;
+    if (agent2) {
+      await soft(() =>
+        pausable("code index", () => steps.agent2Analyze(input, installed)),
+      );
+      plan =
+        (await soft(() =>
+          pausable("check plan", () => steps.agent2Plan(input, facts)),
+        )) ?? sharedPlan;
+    }
+    const check = (item: (typeof plan)[number], prior: CheckResult[]) =>
+      agent2
+        ? steps.agent2Check(input, item, facts, installed, prior)
+        : steps.labCheck(input, item, facts, installed, prior);
 
     // Checks on the installed copy share one folder, so they run one after another.
     // Checks on the read-only source run at the same time.
@@ -156,19 +196,18 @@ export async function labChecks(start: LabStart): Promise<CheckResult[]> {
       (async () => {
         for (const item of onWork)
           results.push(
-            await pausable(item.title, () =>
-              steps.labCheck(input, item, facts, installed, [...results]),
-            ),
+            await pausable(item.title, () => check(item, [...results])),
           );
       })(),
       ...onSource.map(async (item) =>
-        results.push(
-          await pausable(item.title, () =>
-            steps.labCheck(input, item, facts, installed, []),
-          ),
-        ),
+        results.push(await pausable(item.title, () => check(item, []))),
       ),
     ]);
+    // U4: the security hunt, on its own budget. It never decides whether the fix agent runs.
+    if (agent2)
+      await soft(() =>
+        pausable("security hunt", () => steps.agent2Hunt(input)),
+      );
     const failed = (id: string) =>
       results.some((r) => r.id === id && r.status === "fail");
     const fixing =

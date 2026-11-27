@@ -410,9 +410,9 @@ export function ConnectionsView({
                   <button
                     type="button"
                     onClick={() => toggle(item.id)}
-                    className={`focusable inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-medium transition-colors ${
+                    className={`focusable inline-flex h-7 items-center gap-1.5 rounded border px-2.5 text-[12px] font-medium transition-colors ${
                       isOn
-                        ? "border-green-800/30 bg-green-800/10 text-green-900 hover:bg-green-800/16"
+                        ? "border bg-black text-white"
                         : "border-ink/25 bg-white text-ink hover:bg-paper"
                     }`}
                   >
@@ -420,7 +420,7 @@ export function ConnectionsView({
                       aria-hidden="true"
                       className="size-3.5 opacity-75"
                     />
-                    {isOn ? "Connected" : "Connections"}
+                    {isOn ? "Connected" : "Connect"}
                   </button>
                 </div>
               </li>

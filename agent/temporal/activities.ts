@@ -8,8 +8,21 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { Context } from "@temporalio/activity";
+import {
+  analyzeStep,
+  type GateStep,
+  gateStep,
+} from "../../Tests/Agent_2/analyze";
 import { CASES as CASES2 } from "../../Tests/Agent_2/cases";
+import {
+  loadAnalysis,
+  outgoingCalls,
+  type Plan2Item,
+  planChecks2,
+} from "../../Tests/Agent_2/check-plan";
 import { checkpoints as checkpoints2 } from "../../Tests/Agent_2/checkpoints";
+import { runCheck2 } from "../../Tests/Agent_2/checks2";
+import { type HuntResult, runHunt } from "../../Tests/Agent_2/hunt";
 import { startCase as startCase2 } from "../../Tests/Agent_2/lab-run";
 import {
   commitFiles as commitFiles2,
@@ -569,4 +582,281 @@ export async function labCleanup(input: Pick<LabInput, "run">): Promise<void> {
     title: `Sandbox destroyed: ${removed.containers} containers, ${removed.networks} networks, ${removed.volumes} volumes`,
     data: removed,
   });
+}
+
+// --- Agent_2 (Tests/Agent_2): language gate, code index, check plan, its checks, security hunt.
+// Every one of these ends normally even when something inside fails: the failure is written to
+// the trace and the run goes on with a safe fallback (the shared plan, no hunt).
+
+const checkoutDir = (run: string) => path.join(cacheDir, "checkouts", run);
+const agent2Dir = (run: string) => path.join(runDir(run), "agent2");
+const soft = async <T>(
+  run: string,
+  what: string,
+  fallback: T,
+  work: () => Promise<T>,
+): Promise<T> => {
+  try {
+    return await work();
+  } catch (e) {
+    if (Context.current().cancellationSignal.aborted) throw e;
+    await emit(run, {
+      step: "agent2",
+      kind: "agent2.failed",
+      title: `${what} failed; the run goes on without it: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`,
+      status: "error",
+    });
+    return fallback;
+  }
+};
+
+/** U0 + stack. Returns whether the run may go on, and the message when it may not. */
+export async function agent2Gate(
+  input: LabInput,
+): Promise<{ ok: boolean; message: string | null }> {
+  return beating(async () =>
+    soft<{ ok: boolean; message: string | null }>(
+      input.run,
+      "The language gate",
+      { ok: true, message: null },
+      async () => {
+        const g = await gateStep({
+          run: input.run,
+          dir: checkoutDir(input.run),
+          base: input.base,
+          head: input.head,
+        });
+        await mkdir(agent2Dir(input.run), { recursive: true });
+        await writeFile(
+          path.join(agent2Dir(input.run), "gate.json"),
+          JSON.stringify(g),
+        );
+        return { ok: g.gate.ok, message: g.gate.message };
+      },
+    ),
+  );
+}
+
+/** Tells the user's channel that Rox stopped at the language gate. */
+export async function agent2Stop(
+  input: Pick<LabInput, "run" | "repo" | "pr">,
+  message: string,
+  report: ReportTarget | null,
+): Promise<void> {
+  await emit(input.run, {
+    step: "run",
+    kind: "run.unsupported",
+    title: message,
+    status: "skipped",
+  });
+  if (report)
+    await sendRunNote(report, {
+      run: input.run,
+      headline: `Rox did not check ${input.repo}${input.pr ? ` PR #${input.pr}` : ""}`,
+      lines: [message],
+    }).catch(() => false);
+}
+
+/** U2 index + reach + U1 profile, on the installed copy. */
+export async function agent2Analyze(
+  input: LabInput,
+  installed: Installed,
+): Promise<{ ok: boolean }> {
+  return beating(async (signal) =>
+    soft<{ ok: boolean }>(
+      input.run,
+      "The code index",
+      { ok: false },
+      async () => {
+        const { readFile } = await import("node:fs/promises");
+        const gate = JSON.parse(
+          await readFile(path.join(agent2Dir(input.run), "gate.json"), "utf8"),
+        ) as GateStep;
+        const v = volumes(input.run);
+        await analyzeStep({
+          run: input.run,
+          dir: checkoutDir(input.run),
+          base: input.base,
+          head: input.head,
+          gate,
+          volume: v.work,
+          baseVolume: installed.base ? v.base : null,
+          signal,
+        });
+        return { ok: true };
+      },
+    ),
+  );
+}
+
+/** U3: Agent_2's check plan. Falls back to the safe plan (every applicable check) without analysis. */
+export async function agent2Plan(
+  input: LabInput,
+  facts: Facts,
+): Promise<Plan2Item[]> {
+  return beating(async () => {
+    const { stack, analysis } = await loadAnalysis(input.run);
+    let outgoing: boolean | null = null;
+    if (analysis)
+      outgoing = await soft(
+        input.run,
+        "Finding outgoing calls",
+        null as boolean | null,
+        async () => {
+          const { readFile } = await import("node:fs/promises");
+          const head = JSON.parse(
+            await readFile(
+              path.join(agent2Dir(input.run), "index-head.json"),
+              "utf8",
+            ),
+          ) as { externals: Record<string, string[]> };
+          const texts = new Map<string, string | null>();
+          for (const f of new Set([
+            ...analysis.profile.files.map((x) => x.path),
+            ...analysis.reach.callers.map((c) => c.id.split("#")[0] ?? ""),
+          ]))
+            texts.set(
+              f,
+              await readFile(
+                path.join(checkoutDir(input.run), f),
+                "utf8",
+              ).catch(() => null),
+            );
+          return outgoingCalls(
+            analysis,
+            head.externals,
+            (f) => texts.get(f) ?? null,
+          );
+        },
+      );
+    const plan = planChecks2({
+      facts,
+      stack,
+      analysis,
+      hasBase: Boolean(input.base),
+      outgoing,
+    });
+    await emit(input.run, {
+      step: "agent2",
+      kind: "agent2.plan",
+      title: `Check plan: ${plan.filter((p) => p.applies).length} run, ${plan.filter((p) => !p.applies).length} skipped${analysis ? "" : " (not narrowed: no change analysis)"}`,
+      data: {
+        plan: plan.map((p) => ({
+          id: p.id,
+          title: p.title,
+          applies: p.applies,
+          why: p.why,
+        })),
+      },
+    });
+    return plan;
+  });
+}
+
+/** One Agent_2 check. Never throws: a crash is an "error" result. */
+export async function agent2Check(
+  input: LabInput,
+  item: PlanItem & Partial<Plan2Item>,
+  facts: Facts,
+  installed: Installed,
+  prior: CheckResult[],
+): Promise<CheckResult> {
+  return beating(async (signal) => {
+    if (item.applies)
+      await emit(input.run, {
+        step: item.id,
+        kind: "check.started",
+        title: item.title,
+        status: "running",
+        attempt: attempt(),
+      });
+    const { stack } = await loadAnalysis(input.run);
+    const result = await runCheck2(
+      input,
+      { runner: "shared", ...item },
+      facts,
+      installed,
+      prior,
+      stack,
+      signal,
+    );
+    await emit(input.run, {
+      step: item.id,
+      kind: "check.finished",
+      title: item.title,
+      status: result.status,
+      ms: result.ms,
+      data: {
+        summary: result.summary,
+        reports: result.reports,
+        counts: result.counts,
+      },
+    });
+    return result;
+  });
+}
+
+/** U4: the security hunt. Never throws. */
+export async function agent2Hunt(input: LabInput): Promise<HuntResult | null> {
+  return beating(async (signal) =>
+    soft(
+      input.run,
+      "The security hunt",
+      null as HuntResult | null,
+      async () => {
+        const { analysis } = await loadAnalysis(input.run);
+        if (!analysis) {
+          await emit(input.run, {
+            step: "hunt",
+            kind: "hunt.skipped",
+            title: "Security hunt skipped: there is no change analysis",
+            status: "skipped",
+          });
+          return null;
+        }
+        const diff = input.base
+          ? await promisify(execFile)(
+              "git",
+              [
+                "-C",
+                checkoutDir(input.run),
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                `${input.base}...${input.head}`,
+                "--",
+                ".",
+                ":(exclude)*lock*",
+              ],
+              { maxBuffer: 8 * 1024 * 1024, windowsHide: true },
+            ).then(
+              (r) => r.stdout,
+              () => "",
+            )
+          : "";
+        let ws: Workspace2 | null = null;
+        const workspace = async () => {
+          if (ws) return ws;
+          const w = new Workspace2(input.run, "verify");
+          await w.close();
+          await w.open();
+          ws = w;
+          return w;
+        };
+        try {
+          const checkpointer = await checkpoints2().catch(() => undefined);
+          return await runHunt({
+            run: input.run,
+            diff,
+            analysis,
+            workspace,
+            checkpointer,
+            signal,
+          });
+        } finally {
+          if (ws) await (ws as Workspace2).close().catch(() => {});
+        }
+      },
+    ),
+  );
 }

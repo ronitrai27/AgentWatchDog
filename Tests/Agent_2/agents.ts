@@ -126,7 +126,7 @@ const lastCall = (calls: number) =>
   });
 
 /** The same guard rails for every agent; outermost first. */
-const rails = (name: ModelName, calls: number) =>
+export const rails = (name: ModelName, calls: number) =>
   [
     modelCallLimitMiddleware({ runLimit: calls, exitBehavior: "error" }),
     contextEditingMiddleware({
@@ -162,6 +162,7 @@ How to work:
 - Follow the failing path: from the test, to the code it calls, to the line that is wrong.
 - Check your idea against the failure before you answer: would exactly this line produce exactly this result? Work it through with the numbers in the failure. If not, look further.
 - Read the code before deciding. Do not answer from file names.
+- Navigate with the code tools: find_symbol to locate a function, outline_file before reading a long file, find_references and reach to follow who calls what.
 - Say bug_in_code only with the exact line that is wrong. Quote it exactly as it is in the file, without line numbers. Quotes are checked; a wrong quote is rejected.
 - Say test_is_wrong when the test contradicts itself or asks for what the source clearly should not do. That is a good answer: a human will look.
 - Say cannot_tell when the evidence is not there. That is better than a guess.
@@ -217,7 +218,7 @@ export const judge = createAgent({
   systemPrompt: `You are the last check before a human sees a fix. All tests already pass; your job is to find what tests cannot see. You did not write this fix.
 
 How to work:
-- Read the changed lines in their file, then search for the callers of what changed and read how they use it.
+- Read the changed lines in their file, then find the callers of what changed (find_references, reach) and read how they use it.
 - A classifier's scores may come with the patch. Use them as leads to check first, not as the answer.
 - Decide on what you read in the code, and say what you checked.
 

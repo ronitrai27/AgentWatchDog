@@ -3,6 +3,7 @@
 // the model reads them and adjusts.
 import { type ToolRuntime, tool } from "@langchain/core/tools";
 import * as z from "zod";
+import { CODE_TOOLS } from "./code-tools";
 import { tidy } from "./gates";
 import { editDenied } from "./policy";
 import type { Spend } from "./spend";
@@ -121,5 +122,11 @@ export const editFile = tool(
   },
 );
 
-export const READ_TOOLS = [listFiles, searchCode, readFile];
+/**
+ * U5: the read tools. `search_code` is Agent_2's upgraded search (regex, word, glob, context,
+ * every JS/TS extension); find_symbol, outline_file, find_references and reach come from the code
+ * index. The old exact-text `searchCode` above stays for reference only.
+ */
+export const READ_TOOLS = [listFiles, readFile, ...CODE_TOOLS];
+void searchCode;
 export const ENGINEER_TOOLS = [...READ_TOOLS, editFile, runTests];

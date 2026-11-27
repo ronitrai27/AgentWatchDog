@@ -30,10 +30,18 @@ export class Spend {
     readonly limit: number,
   ) {}
 
-  static async load(run: string, limit = RUN_LIMIT_USD): Promise<Spend> {
+  /**
+   * @param only Which steps count toward this budget. The security hunt (U4) has a budget of its
+   *   own, so the fix agent and the hunt never spend each other's money.
+   */
+  static async load(
+    run: string,
+    limit = RUN_LIMIT_USD,
+    only: (step: string) => boolean = (s) => !s.startsWith("hunt"),
+  ): Promise<Spend> {
     const spend = new Spend(run, limit);
     for (const e of await readEvents(run))
-      if (e.kind === "model.call") spend.add(e.data ?? {});
+      if (e.kind === "model.call" && only(e.step)) spend.add(e.data ?? {});
     return spend;
   }
 

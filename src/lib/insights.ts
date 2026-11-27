@@ -35,20 +35,51 @@ const LOCKFILE =
 const settled = <T>(r: PromiseSettledResult<T>) =>
   r.status === "fulfilled" ? r.value : null;
 
-// Home asks twice at once (the boxes and the line under Welcome); GitHub is read once a minute.
-const recent = new Map<string, { at: number; value: Promise<Insights> }>();
+export const INSIGHTS_TTL_MS = 30 * 60_000;
+
+type CacheEntry = {
+  at: number;
+  value: Promise<Insights>;
+  lastGood?: Insights;
+};
+
+// Shared on globalThis so /api/insights and /api/brief (separate Next.js route bundles)
+// deduplicate in-flight requests and reuse the 30-minute cache.
+const shared = globalThis as {
+  roxInsightsCache?: Map<string, CacheEntry>;
+};
+const recent = (shared.roxInsightsCache ??= new Map<string, CacheEntry>());
+
+export function invalidateInsights(userId: string): void {
+  recent.delete(userId);
+}
 
 export function getInsights(
   userId: string,
   isJudge: boolean,
 ): Promise<Insights> {
   const known = recent.get(userId);
-  if (known && Date.now() - known.at < 60_000) return known.value;
-  const value = readInsights(userId, isJudge);
-  recent.set(userId, { at: Date.now(), value });
+  if (known && Date.now() - known.at < INSIGHTS_TTL_MS) return known.value;
+  const previousGood = known?.lastGood;
+  const value = readInsights(userId, isJudge).then((result) => {
+    if (result.github === "unreachable" && previousGood) {
+      return previousGood;
+    }
+    return result;
+  });
+  const entry: CacheEntry = { at: Date.now(), value, lastGood: previousGood };
+  recent.set(userId, entry);
   value.then(
-    (i) => i.github === "unreachable" && recent.delete(userId),
-    () => recent.delete(userId),
+    (i) => {
+      if (i.github === "connected") {
+        entry.lastGood = i;
+      } else if (i.github === "unreachable" || i.github === "expired") {
+        if (recent.get(userId) === entry) recent.delete(userId);
+      }
+    },
+    () => {
+      if (recent.get(userId) === entry) recent.delete(userId);
+    },
   );
   return value;
 }
@@ -79,14 +110,17 @@ async function readInsights(
   if (!github || !row?.repo || row.repo_installation_id === null)
     return empty("none");
 
-  const target = {
+  const baseTarget = {
     repo: row.repo,
     installationId: Number(row.repo_installation_id),
-    signal: AbortSignal.timeout(12_000),
   };
+  const stageTarget = () => ({
+    ...baseTarget,
+    signal: AbortSignal.timeout(15_000),
+  });
   let branch: string;
   try {
-    branch = (await github.getRepo(target)).defaultBranch;
+    branch = (await github.getRepo(stageTarget())).defaultBranch;
   } catch (error) {
     const kind = error instanceof ToolError ? error.kind : "failed";
     return empty(
@@ -98,15 +132,16 @@ async function readInsights(
 
   const today = Math.floor(Date.now() / DAY);
   const since = new Date((today - ACTIVITY_DAYS + 1) * DAY);
+  const dataTarget = stageTarget();
   const [commits, checks, pulls, counts, root, dotGithub, workflows] =
     await Promise.allSettled([
-      github.listCommits(target, 100, since),
-      github.getChecks(target, branch),
-      github.listOpenPulls(target, 8),
-      github.countPulls(target),
-      github.listDir(target, "", branch),
-      github.listDir(target, ".github", branch),
-      github.listDir(target, ".github/workflows", branch),
+      github.listCommits(dataTarget, 100, since),
+      github.getChecks(dataTarget, branch),
+      github.listOpenPulls(dataTarget, 8),
+      github.countPulls(dataTarget),
+      github.listDir(dataTarget, "", branch),
+      github.listDir(dataTarget, ".github", branch),
+      github.listDir(dataTarget, ".github/workflows", branch),
     ]);
 
   const insights = empty("connected");
@@ -132,8 +167,9 @@ async function readInsights(
   const open = settled(pulls);
   if (main && open) {
     const first = open.slice(0, 5);
+    const prTarget = stageTarget();
     const pullChecks = await Promise.allSettled(
-      first.map((p) => github.getChecks(target, p.headSha)),
+      first.map((p) => github.getChecks(prTarget, p.headSha)),
     );
     insights.health = {
       branch,

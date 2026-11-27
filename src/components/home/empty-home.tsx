@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import Link from "next/link";
 import { type ReactNode, useEffect, useState } from "react";
 import { Composer } from "@/components/chat/composer";
+import type { BrandId } from "@/components/setup/brand";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { Insights } from "@/lib/insights";
 import type { SetupState } from "@/lib/models";
@@ -136,16 +137,50 @@ function reason(insights: Insights | null, failed: boolean): string {
 }
 
 const plus = (capped: boolean) => (capped ? "+" : "");
+const CLIENT_CACHE_TTL_MS = 30 * 60_000;
+
+function readCachedInsights(repo: string | null): Insights | null {
+  if (!repo || typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(`rox:insights:${repo}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { at: number; data: Insights };
+    if (
+      Date.now() - parsed.at < CLIENT_CACHE_TTL_MS &&
+      parsed.data.github === "connected"
+    ) {
+      return parsed.data;
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return null;
+}
+
+function writeCachedInsights(repo: string | null, data: Insights): void {
+  if (!repo || data.github !== "connected" || typeof window === "undefined")
+    return;
+  try {
+    window.sessionStorage.setItem(
+      `rox:insights:${repo}`,
+      JSON.stringify({ at: Date.now(), data }),
+    );
+  } catch {
+    // ignore storage errors
+  }
+}
 
 export function EmptyHome({
   setup,
   name,
+  connectedApps,
   busy,
   problem,
   onSend,
 }: {
   setup: SetupState;
   name: string;
+  connectedApps: BrandId[];
   busy: boolean;
   problem: string | null;
   onSend: (text: string) => void;
@@ -156,13 +191,21 @@ export function EmptyHome({
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
+    const cached = readCachedInsights(setup.repo);
+    if (cached) {
+      setInsights(cached);
+      return;
+    }
     const stop = new AbortController();
     fetch("/api/insights", { signal: stop.signal })
       .then((res) => (res.ok ? res.json() : Promise.reject()))
-      .then(setInsights)
+      .then((data: Insights) => {
+        writeCachedInsights(setup.repo, data);
+        setInsights(data);
+      })
       .catch(() => !stop.signal.aborted && setFailed(true));
     return () => stop.abort();
-  }, []);
+  }, [setup.repo]);
 
   const why = reason(insights, failed);
   const idle = <IdleVector busy={!insights && !failed} />;
@@ -298,7 +341,7 @@ export function EmptyHome({
             focusSignal={focus}
             leading={
               <>
-                <Connectors github={insights?.github} />
+                <Connectors connected={connectedApps} />
                 <Link
                   href="/home/settings?tab=agent"
                   className="focusable flex h-8 items-center gap-2 rounded-full border border-ink/25 bg-neutral-100 px-3 text-[13px] font-medium text-ink hover:border-ink/40"

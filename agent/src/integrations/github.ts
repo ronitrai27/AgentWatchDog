@@ -118,6 +118,7 @@ export function createGithubClient(options: Options): GithubClient {
   const base = options.apiBase ?? "https://api.github.com";
   const now = options.now ?? Date.now;
   const tokens = new Map<number, { token: string; expiresAt: number }>();
+  const inflightTokens = new Map<number, Promise<string>>();
 
   const b64 = (value: object) =>
     Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -140,27 +141,47 @@ export function createGithubClient(options: Options): GithubClient {
       signal?: AbortSignal;
     },
   ): Promise<Response> {
-    try {
-      return await fetchImpl(`${base}${route}`, {
-        method: init.method ?? "GET",
-        headers: {
-          authorization: `Bearer ${init.token}`,
-          accept: "application/vnd.github+json",
-          "x-github-api-version": "2022-11-28",
-          "user-agent": "rox-agent",
-          ...(init.body ? { "content-type": "application/json" } : {}),
-        },
-        body: init.body ? JSON.stringify(init.body) : undefined,
-        signal: init.signal,
-      });
-    } catch (error) {
-      if ((error as Error).name === "AbortError")
-        throw new ToolError("aborted", "Stopped while talking to GitHub");
-      throw new ToolError("upstream", "Could not reach GitHub", {
-        cause: error,
-        hint: "Check the internet connection.",
-      });
+    const method = init.method ?? "GET";
+    const canRetry = method === "GET";
+    const maxAttempts = canRetry ? 2 : 1;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const res = await fetchImpl(`${base}${route}`, {
+          method,
+          headers: {
+            authorization: `Bearer ${init.token}`,
+            accept: "application/vnd.github+json",
+            "x-github-api-version": "2022-11-28",
+            "user-agent": "rox-agent",
+            ...(init.body ? { "content-type": "application/json" } : {}),
+          },
+          body: init.body ? JSON.stringify(init.body) : undefined,
+          signal: init.signal,
+        });
+        if (
+          canRetry &&
+          attempt < maxAttempts &&
+          (res.status === 502 || res.status === 503 || res.status === 504)
+        ) {
+          await new Promise((r) => setTimeout(r, 400));
+          continue;
+        }
+        return res;
+      } catch (error) {
+        if ((error as Error).name === "AbortError")
+          throw new ToolError("aborted", "Stopped while talking to GitHub");
+        if (canRetry && attempt < maxAttempts && !init.signal?.aborted) {
+          await new Promise((r) => setTimeout(r, 400));
+          continue;
+        }
+        throw new ToolError("upstream", "Could not reach GitHub", {
+          cause: error,
+          hint: "Check the internet connection.",
+        });
+      }
     }
+    throw new ToolError("upstream", "Could not reach GitHub");
   }
 
   function fail(response: Response, what: string, body: string): never {
@@ -220,31 +241,43 @@ export function createGithubClient(options: Options): GithubClient {
   ): Promise<string> {
     const cached = tokens.get(installationId);
     if (cached && cached.expiresAt - 60_000 > now()) return cached.token;
-    const jwt = appJwt();
-    const route = `/app/installations/${installationId}/access_tokens`;
-    let response = await request(route, {
-      token: jwt,
-      method: "POST",
-      body: { permissions: READ_PERMISSIONS },
-      signal,
-    });
-    // The app may not hold every permission we ask for; fall back to the smallest set.
-    if (response.status === 422) {
-      response = await request(route, {
+    const inflight = inflightTokens.get(installationId);
+    if (inflight) return inflight;
+
+    const mint = (async () => {
+      const jwt = appJwt();
+      const route = `/app/installations/${installationId}/access_tokens`;
+      let response = await request(route, {
         token: jwt,
         method: "POST",
-        body: { permissions: { metadata: "read" } },
+        body: { permissions: READ_PERMISSIONS },
         signal,
       });
+      // The app may not hold every permission we ask for; fall back to the smallest set.
+      if (response.status === 422) {
+        response = await request(route, {
+          token: jwt,
+          method: "POST",
+          body: { permissions: { metadata: "read" } },
+          signal,
+        });
+      }
+      const text = await response.text();
+      if (!response.ok) fail(response, "this GitHub installation", text);
+      const parsed = JSON.parse(text) as { token: string; expires_at: string };
+      tokens.set(installationId, {
+        token: parsed.token,
+        expiresAt: Date.parse(parsed.expires_at),
+      });
+      return parsed.token;
+    })();
+
+    inflightTokens.set(installationId, mint);
+    try {
+      return await mint;
+    } finally {
+      inflightTokens.delete(installationId);
     }
-    const text = await response.text();
-    if (!response.ok) fail(response, "this GitHub installation", text);
-    const parsed = JSON.parse(text) as { token: string; expires_at: string };
-    tokens.set(installationId, {
-      token: parsed.token,
-      expiresAt: Date.parse(parsed.expires_at),
-    });
-    return parsed.token;
   }
 
   async function get<T>(
@@ -253,8 +286,15 @@ export function createGithubClient(options: Options): GithubClient {
     what: string,
     allowMissing = false,
   ): Promise<T | null> {
-    const token = await installationToken(t.installationId, t.signal);
-    const response = await request(route, { token, signal: t.signal });
+    const hadCached = tokens.has(t.installationId);
+    let token = await installationToken(t.installationId, t.signal);
+    let response = await request(route, { token, signal: t.signal });
+    // If a cached installation token was revoked or expired early, re-mint once.
+    if (response.status === 401 && hadCached) {
+      tokens.delete(t.installationId);
+      token = await installationToken(t.installationId, t.signal);
+      response = await request(route, { token, signal: t.signal });
+    }
     const text = await response.text();
     if (response.status === 404 && allowMissing) return null;
     if (!response.ok) fail(response, what, text);

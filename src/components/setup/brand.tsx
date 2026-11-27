@@ -11,6 +11,7 @@ const BRANDS = {
   daytona: { src: "/Icon%20512x512.png", fill: true },
   e2b: { src: "/e2b.jpeg", fill: true },
   slack: { src: "/slack.png" },
+  telegram: { src: "/telegram.jpeg", fill: true },
   linear: { src: "/linear.png", dark: true },
   sentry: { src: "/sentry.svg", dark: true },
   posthog: { src: "/posthog.svg" },

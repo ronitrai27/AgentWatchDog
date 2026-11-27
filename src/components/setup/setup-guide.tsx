@@ -186,6 +186,7 @@ export function SetupGuide({
   isJudge,
   login,
   name,
+  connectedApps,
   reopenAt,
   extras,
 }: {
@@ -193,6 +194,7 @@ export function SetupGuide({
   isJudge: boolean;
   login: string;
   name: string;
+  connectedApps: BrandId[];
   /** Set when a finished guide was asked for: a step to open, or "open". */
   reopenAt?: string;
   /** Shown below the guide, and only while the guide is open. */
@@ -249,7 +251,8 @@ export function SetupGuide({
     };
   };
 
-  if (!shown) return <RoxHome setup={state} name={name} />;
+  if (!shown)
+    return <RoxHome setup={state} name={name} connectedApps={connectedApps} />;
 
   return (
     <div className="mx-auto max-w-[720px]">

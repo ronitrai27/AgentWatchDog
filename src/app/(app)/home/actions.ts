@@ -21,6 +21,7 @@ import {
   saveSlackConnection,
 } from "@/lib/report-connections";
 import { getSession } from "@/lib/session";
+import { invalidateInsights } from "@/lib/insights";
 import { listRepos } from "@/lib/setup";
 import { recordAudit } from "@/lib/users";
 import { encryptSecret } from "@/lib/vault";
@@ -90,6 +91,7 @@ export async function saveRepo(name: string): Promise<Result> {
     return NOT_SAVED;
   }
   await audit(session.uid, "setup.repo", { repo: name });
+  invalidateInsights(session.uid);
   refresh();
   return { ok: true };
 }
