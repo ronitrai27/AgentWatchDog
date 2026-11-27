@@ -105,7 +105,7 @@ const FIRST = ["github", "slack", "sentry", "vercel"];
 
 /**
  * Every app as a badge (logo, name, Connect) in one line that scrolls sideways. Which apps are connected comes from Rox's own connections_list tool.
- * GitHub and Slack connect for real; the others are a demo for now, and the button says so when hovered.
+ * Only apps the tool returned from the database are shown.
  */
 export function ConnectorsCard({ connections }: { connections: Connection[] }) {
   const first = FIRST.map((id) => connections.find((c) => c.id === id)).filter(

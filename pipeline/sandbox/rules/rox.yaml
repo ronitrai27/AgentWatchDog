@@ -1,0 +1,41 @@
+rules:
+  - id: rox-eval-of-request-data
+    message: Request data reaches eval or the Function constructor, so a caller can run code on the server.
+    severity: ERROR
+    languages: [typescript, javascript]
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: $REQ.body
+          - pattern: $REQ.query
+          - pattern: $REQ.params
+          - pattern: $REQ.headers
+    pattern-sinks:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: new Function(...)
+          - pattern: setTimeout($X, ...)
+
+  - id: rox-sql-built-from-request
+    message: Request data is put into an SQL string. Use a parameter instead.
+    severity: ERROR
+    languages: [typescript, javascript]
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: $REQ.body
+          - pattern: $REQ.query
+          - pattern: $REQ.params
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $DB.query(`...${...}...`, ...)
+          - pattern: $DB.exec(`...${...}...`, ...)
+          - pattern: $DB.prepare(`...${...}...`)
+
+  - id: rox-disabled-tls-check
+    message: TLS certificate checks are turned off.
+    severity: WARNING
+    languages: [typescript, javascript]
+    pattern-either:
+      - pattern: "rejectUnauthorized: false"
+      - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"

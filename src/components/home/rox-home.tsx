@@ -1,6 +1,8 @@
 "use client";
 
+import { SquarePenIcon } from "lucide-react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
 import { ChatPanel } from "@/components/chat/chat-panel";
@@ -62,14 +64,24 @@ export function RoxHome({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
             transition={FADE}
-            className="mx-auto max-w-[720px]"
+            className="relative"
           >
-            <ChatPanel
-              sessionId={chatId}
-              takeFirst={takeFirst}
-              modelId={setup.orchestrator}
-              helperId={setup.subagent}
-            />
+            <Link
+              href="/home"
+              title="Start a new chat"
+              className="btn btn-secondary -mt-4 mb-2 inline-flex h-8 px-3 text-[13px] sm:-mt-8 lg:fixed lg:left-64 lg:top-18 lg:z-20 lg:m-0"
+            >
+              <SquarePenIcon aria-hidden="true" className="size-3.5" />
+              New
+            </Link>
+            <div className="mx-auto max-w-[820px]">
+              <ChatPanel
+                sessionId={chatId}
+                takeFirst={takeFirst}
+                modelId={setup.orchestrator}
+                helperId={setup.subagent}
+              />
+            </div>
           </motion.div>
         ) : (
           <motion.div

@@ -4,12 +4,13 @@
 import {
   Client,
   Connection,
+  WorkflowExecutionAlreadyStartedError,
   WorkflowIdReusePolicy,
   WorkflowNotFoundError,
 } from "@temporalio/client";
 import type { ReportTarget } from "./report-connections";
 
-// The same settings as agent/temporal/config.ts.
+// The same settings as pipeline/temporal/config.ts.
 const ADDRESS = process.env.TEMPORAL_ADDRESS ?? "127.0.0.1:7233";
 const NAMESPACE = process.env.TEMPORAL_NAMESPACE ?? "default";
 const TASK_QUEUE = "rox-lab";
@@ -22,6 +23,9 @@ export type PrRun = {
   prBranch: string;
   title: string | null;
   report: ReportTarget | null;
+  /** The Rox user whose repository it is, and the webhook delivery that started it. */
+  userId: string;
+  eventId: string;
 };
 
 export async function startPrRun(
@@ -60,11 +64,59 @@ export async function startPrRun(
           prBranch: r.prBranch,
           profile: "fast",
           fix: true,
+          origin: {
+            source: "github",
+            trigger: "github:pr_main",
+            invokedBy: "webhook",
+            eventId: r.eventId,
+            userId: r.userId,
+          },
           ...(r.report ? { report: r.report } : {}),
         },
       ],
     });
     return { workflowId, runId: handle.firstExecutionRunId };
+  } finally {
+    await connection.close();
+  }
+}
+
+export type IncidentRun = {
+  repo: string | null;
+  trigger: string;
+  why: string;
+  issueId: string;
+  projectId: string;
+  title: string;
+  link: string | null;
+  report: ReportTarget | null;
+};
+
+/**
+ * Starts Rox's run for a Sentry incident. One workflow id per issue: while a run for the issue is
+ * still going, more alerts for it start nothing (started: false).
+ */
+export async function startIncidentRun(
+  r: IncidentRun,
+): Promise<{ workflowId: string; started: boolean }> {
+  const connection = await Connection.connect({ address: ADDRESS });
+  try {
+    const client = new Client({ connection, namespace: NAMESPACE });
+    const workflowId = `incident:sentry:${r.projectId}:${r.issueId}`;
+    const { projectId: _p, ...args } = r;
+    try {
+      await client.workflow.start("incidentRun", {
+        taskQueue: TASK_QUEUE,
+        workflowId,
+        workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE,
+        args: [args],
+      });
+      return { workflowId, started: true };
+    } catch (error) {
+      if (error instanceof WorkflowExecutionAlreadyStartedError)
+        return { workflowId, started: false };
+      throw error;
+    }
   } finally {
     await connection.close();
   }
@@ -78,7 +130,7 @@ export async function controlPrRun(
   why = `${action} from Rox`,
 ) {
   const { abortRun, pauseRun, resumeRun } = await import(
-    "../../agent/temporal/control"
+    "../../pipeline/temporal/control"
   );
   const connection = await Connection.connect({ address: ADDRESS });
   try {

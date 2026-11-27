@@ -1,5 +1,5 @@
-// Tools about the apps Rox can listen to or report to. Every status here is real: GitHub from the
-// setup, Slack from the user's saved connection plus a live check of the bot token. Nothing is
+// Tools about the apps Rox can listen to or report to. Every status here is real: GitHub and Sentry
+// from the setup, Slack from the user's saved connection plus a live check of the bot token. Nothing is
 // guessed; a failed check says exactly what failed.
 import { z } from "zod";
 import { DEMO_REPO } from "../../../src/lib/models";
@@ -21,19 +21,6 @@ type Connection = {
   note?: string;
 };
 
-// Apps that can only wake Rox later; none can be connected yet.
-const NOT_BUILT = [
-  {
-    id: "sentry",
-    name: "Sentry",
-    gives: "wakes Rox when an error appears, with the stack trace",
-  },
-  { id: "linear", name: "Linear", gives: "Rox opens and updates issues" },
-  { id: "posthog", name: "PostHog", gives: "wakes Rox when a metric drops" },
-  { id: "vercel", name: "Vercel", gives: "wakes Rox when a deploy fails" },
-  { id: "betterstack", name: "Better Stack", gives: "wakes Rox on downtime" },
-] as const;
-
 const SLACK_GIVES =
   "Rox's report after every run: what failed, the cause, the fix and the pull request";
 
@@ -43,8 +30,8 @@ export const connectionsList = defineTool({
   name: "connections_list",
   group: "connections",
   description:
-    "Lists the apps Rox can connect to (GitHub, Slack, Telegram, Sentry, Linear, PostHog, Vercel, Better Stack) with their real status: connected, not connected, or an error with the exact reason. Slack is checked live against Slack. " +
-    "Use it when the user asks what Rox is connected to, what Rox can see or do, or before recommending a connection.",
+    "Reads the user's connections from the database right now (GitHub, Slack, Sentry; Telegram only when saved): connected, not connected, or an error with the exact reason. Slack is also checked live against Slack. " +
+    "Call it every time the user asks what Rox is connected to, what Rox can see or do, or before recommending a connection. The user can connect or disconnect at any moment, so never answer from an earlier call.",
   input: z.object({}),
   risk: "read",
   timeoutMs: 5_000,
@@ -135,44 +122,47 @@ export const connectionsList = defineTool({
         }
     }
 
-    const telegram: Connection = saved.some((c) => c.provider === "telegram")
+    // Read from the database on every call, so a connect or disconnect shows at once.
+    const SENTRY_GIVES =
+      "wakes Rox on a new issue, an error spike or a regression, with the stack trace";
+    const sentryOn = (setup.triggers ?? []).filter((t) =>
+      t.startsWith("sentry:"),
+    );
+    const sentry: Connection = setup.sentry
       ? {
-          id: "telegram",
-          name: "Telegram",
-          status: "error",
-          detail:
-            "Saved as connected, but Telegram reports are not built yet, so nothing is sent.",
-          canBeConnectedNow: false,
+          id: "sentry",
+          name: "Sentry",
+          status: "connected",
+          detail: `Connected to project ${setup.sentry.project} in ${setup.sentry.org}. Triggers on: ${sentryOn.length ? sentryOn.map((t) => t.replace("sentry:", "")).join(", ") : "none (turn them on in Settings > Workflow)"}.`,
+          gives: SENTRY_GIVES,
+          canBeConnectedNow: true,
         }
       : {
-          id: "telegram",
-          name: "Telegram",
+          id: "sentry",
+          name: "Sentry",
           status: "not_connected",
           detail: "Not connected.",
-          gives: "Rox's report after every run, as a Telegram message",
-          canBeConnectedNow: false,
-          note: "Connecting this app is not built yet.",
+          gives: SENTRY_GIVES,
+          canBeConnectedNow: true,
+          connectAt: "/home/connections",
         };
 
-    return {
-      connections: [
-        github,
-        slack,
-        telegram,
-        ...NOT_BUILT.map(
-          (app): Connection => ({
-            id: app.id,
-            name: app.name,
-            status: isDemo ? "test_mode" : "not_connected",
-            detail: isDemo
-              ? "Runs in test mode in Quick Judge Mode."
-              : "Not connected.",
-            gives: app.gives,
+    // Telegram reports are not built: it appears only when a saved row says the user connected it.
+    const telegram: Connection[] = saved.some((c) => c.provider === "telegram")
+      ? [
+          {
+            id: "telegram",
+            name: "Telegram",
+            status: "error",
+            detail:
+              "Saved as connected, but Telegram reports are not built yet, so nothing is sent.",
             canBeConnectedNow: false,
-            note: "Connecting this app is not built yet.",
-          }),
-        ),
-      ],
+          },
+        ]
+      : [];
+
+    return {
+      connections: [github, slack, sentry, ...telegram],
       reportTo,
     };
   },

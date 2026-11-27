@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { type ReactNode, useId, useState } from "react";
+import { RunSheet, type SheetApp } from "@/components/runs/run-sheet";
 import { ChatHistory } from "./chat-history";
 import { Brand } from "./setup/brand";
 import { UserAvatar } from "./user-avatar";
@@ -225,10 +226,13 @@ export function AppShell({
   user,
   repo,
   isSetUp,
+  apps,
   children,
 }: {
   user: ShellUser;
   repo: string | null;
+  /** Connected apps, for the run sheet when nothing runs. */
+  apps: SheetApp[];
   /** Setup is finished, so the guide is closed until asked for. */
   isSetUp: boolean;
   children: ReactNode;
@@ -310,6 +314,7 @@ export function AppShell({
 
         <main className="flex-1 px-4 py-8 sm:px-6 sm:py-12">{children}</main>
       </div>
+      <RunSheet apps={apps} />
     </div>
   );
 }

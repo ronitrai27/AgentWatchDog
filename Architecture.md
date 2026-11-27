@@ -14,3 +14,10 @@ Four rules define the product:
 3. **Human merges, agent proposes.** No tool for merge, push-to-main, or production deploy exists in the runtime.
 4. **Every run leaves a trace.** Every webhook, model call, tool decision, sandbox hash, and approval is logged durably.
 
+### Two agents, one database
+
+- **The pipeline** (`pipeline/`) is the autonomous agent: the fix agent in `pipeline/agent` (cloned from `Tests/Agent_2`), its shared checks and sandbox code in `pipeline/src`, the sandbox image in `pipeline/sandbox`, and the Temporal worker and workflows in `pipeline/temporal`. Only triggers start it (webhooks in `src/app/api/webhooks/*`, or `pnpm lab`). No model decides whether a run starts. Temporal and the sandbox belong to the pipeline alone.
+- **The chat agent** (`agent/`) answers the user. It never runs the pipeline: it reads what the pipeline wrote.
+- **The trace** is the `runs` table (one row per run: who started it, how, the event, status, outcome, pull request, duration, tokens, cost) and `run_events` (every step, in order). The pipeline writes both through `pipeline/src/events.ts` and `pipeline/src/runs.ts`. Each new event is announced with `pg_notify('run_events', ...)` for a live SSE view.
+- Webhook handlers live in `src/lib/webhooks/<source>.ts`; their routes in `src/app/api/webhooks/<source>/route.ts`.
+

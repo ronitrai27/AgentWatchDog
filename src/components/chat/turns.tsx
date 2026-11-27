@@ -127,7 +127,7 @@ export function AssistantTurn({
   return (
     <Message>
       <MessageContent>
-        <MessageHeader className="px-0 text-[13px] text-foreground">
+        <MessageHeader className="px-0 text-[16px] font-semibold text-foreground">
           Rox
         </MessageHeader>
 

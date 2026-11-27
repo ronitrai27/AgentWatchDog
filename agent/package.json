@@ -6,8 +6,6 @@
   "scripts": {
     "test": "tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit -p .",
-    "worker": "tsx temporal/worker.ts",
-    "lab": "tsx temporal/lab.ts",
     "smoke": "tsx src/smoke.ts"
   },
   "dependencies": {

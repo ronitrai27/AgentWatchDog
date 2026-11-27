@@ -1,8 +1,8 @@
 "use client";
 
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, Trash2Icon } from "lucide-react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 type Chat = { id: string; name: string; updatedAt: string };
@@ -12,10 +12,12 @@ export const CHATS_CHANGED = "rox:chats-changed";
 
 /** "History" in the sidebar: every chat of this user, newest first, names cut to one line. */
 export function ChatHistory({ onNavigate }: { onNavigate?: () => void }) {
+  const router = useRouter();
   const current = useSearchParams().get("chat");
   const [open, setOpen] = useState(true);
   const [chats, setChats] = useState<Chat[] | null>(null);
   const [failed, setFailed] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -27,6 +29,25 @@ export function ChatHistory({ onNavigate }: { onNavigate?: () => void }) {
       setFailed(true);
     }
   }, []);
+
+  async function remove(id: string) {
+    if (deletingId) return;
+    setDeletingId(id);
+    setChats((prev) => prev?.filter((c) => c.id !== id) ?? null);
+    if (current === id) {
+      router.replace("/home");
+    }
+    try {
+      const res = await fetch(`/api/chat/${id}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 404) {
+        void load();
+      }
+    } catch {
+      void load();
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reload when the selected chat changes
   useEffect(() => {
@@ -62,20 +83,35 @@ export function ChatHistory({ onNavigate }: { onNavigate?: () => void }) {
           {chats?.map((chat) => {
             const active = current === chat.id;
             return (
-              <li key={chat.id}>
+              <li
+                key={chat.id}
+                className={`group flex h-8 items-center rounded-md pr-1 ${
+                  active
+                    ? "border bg-linear-to-r from-paper to-green-800/10"
+                    : "hover:bg-ink/6"
+                }`}
+              >
                 <Link
                   href={`/home?chat=${chat.id}`}
                   onClick={onNavigate}
                   title={chat.name}
                   aria-current={active ? "page" : undefined}
-                  className={`block h-8 truncate rounded-md px-2 text-[13px] leading-8 text-ink ${
-                    active
-                      ? "border bg-linear-to-r from-paper to-green-800/10 font-medium text-black"
-                      : "hover:bg-ink/6"
+                  className={`min-w-0 flex-1 truncate px-2 text-[13px] leading-8 text-ink ${
+                    active ? "font-medium text-black" : ""
                   }`}
                 >
                   {chat.name}
                 </Link>
+                <button
+                  type="button"
+                  aria-label={`Delete ${chat.name}`}
+                  title="Delete chat"
+                  disabled={deletingId === chat.id}
+                  onClick={() => void remove(chat.id)}
+                  className="focusable flex size-6 shrink-0 items-center justify-center rounded text-ink-muted hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <Trash2Icon aria-hidden="true" className="size-3.5" />
+                </button>
               </li>
             );
           })}

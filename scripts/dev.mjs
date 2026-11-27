@@ -45,3 +45,20 @@ if (relay) {
 } else {
   console.log("[dev] SMEE_URL is not set, so GitHub events will not arrive.");
 }
+
+// Sentry's webhooks come through their own relay channel.
+const sentryRelay = process.env.SENTRY_SMEE_URL;
+if (sentryRelay) {
+  const target = `${process.env.APP_URL ?? "http://localhost:3000"}/api/webhooks/sentry`;
+  console.log(`[dev] Sentry events: ${sentryRelay} -> ${target}`);
+  start("sentry relay", "node_modules/smee-client/bin/smee.js", [
+    "--url",
+    sentryRelay,
+    "--target",
+    target,
+  ]);
+} else {
+  console.log(
+    "[dev] SENTRY_SMEE_URL is not set, so Sentry events will not arrive.",
+  );
+}

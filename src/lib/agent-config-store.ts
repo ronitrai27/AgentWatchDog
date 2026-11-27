@@ -3,6 +3,7 @@ import {
   type AgentConfig,
   CONFIG_COLUMNS,
   type ConfigRow,
+  RUNS_TODAY_SQL,
   TODAY_SQL,
   type TodayRow,
   toConfig,
@@ -19,12 +20,16 @@ export async function getAgentConfig(
       [userId],
     );
     const today = await c.query<TodayRow>(TODAY_SQL);
+    // Chat turns and pipeline runs share the one day budget.
+    const runs = await c.query<{ usd: string }>(RUNS_TODAY_SQL, [userId]);
     return {
       config: toConfig(config.rows[0]),
-      spentTodayUsd: today.rows.reduce(
-        (sum, r) => sum + costUsd(r.model, Number(r.input), Number(r.output)),
-        0,
-      ),
+      spentTodayUsd:
+        Number(runs.rows[0]?.usd ?? 0) +
+        today.rows.reduce(
+          (sum, r) => sum + costUsd(r.model, Number(r.input), Number(r.output)),
+          0,
+        ),
     };
   });
 }
@@ -33,13 +38,14 @@ export async function writeAgentConfig(userId: string, c: AgentConfig) {
   await withUser(userId, (client) =>
     client.query(
       `INSERT INTO agent_config (user_id, ${CONFIG_COLUMNS})
-       VALUES ($1, $2, $3, $4, $5, $6)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (user_id) DO UPDATE
          SET day_budget_usd = EXCLUDED.day_budget_usd,
              max_minutes = EXCLUDED.max_minutes,
              tone = EXCLUDED.tone,
              instructions = EXCLUDED.instructions,
              report_schedule = EXCLUDED.report_schedule,
+             pr_action = EXCLUDED.pr_action,
              updated_at = now()`,
       [
         userId,
@@ -48,6 +54,7 @@ export async function writeAgentConfig(userId: string, c: AgentConfig) {
         c.tone,
         c.instructions,
         c.schedule,
+        c.prAction,
       ],
     ),
   );

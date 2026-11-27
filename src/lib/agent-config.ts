@@ -31,6 +31,9 @@ export const SCHEDULES = [
 
 export type Schedule = (typeof SCHEDULES)[number]["id"];
 
+export const PR_ACTIONS = ["open_pr", "merge_pr"] as const;
+export type PrAction = (typeof PR_ACTIONS)[number];
+
 export type AgentConfig = {
   /** The most all runs of one day (UTC) may cost together, in US dollars. */
   dayBudgetUsd: number;
@@ -38,14 +41,17 @@ export type AgentConfig = {
   tone: Tone;
   instructions: string;
   schedule: Schedule;
+  /** What the pipeline does with a verified fix: open the PR, or merge it itself. */
+  prAction: PrAction;
 };
 
 export const DEFAULT_CONFIG: AgentConfig = {
   dayBudgetUsd: 5,
-  maxMinutes: 5,
+  maxMinutes: 20,
   tone: "strict",
   instructions: "",
   schedule: "off",
+  prAction: "open_pr",
 };
 
 export const MAX_INSTRUCTIONS = 2000;
@@ -56,10 +62,11 @@ export type ConfigRow = {
   tone: Tone;
   instructions: string;
   report_schedule: Schedule;
+  pr_action: PrAction;
 };
 
 export const CONFIG_COLUMNS =
-  "day_budget_usd, max_minutes, tone, instructions, report_schedule";
+  "day_budget_usd, max_minutes, tone, instructions, report_schedule, pr_action";
 
 export const toConfig = (row: ConfigRow | undefined): AgentConfig =>
   row
@@ -69,8 +76,13 @@ export const toConfig = (row: ConfigRow | undefined): AgentConfig =>
         tone: row.tone,
         instructions: row.instructions,
         schedule: row.report_schedule,
+        prAction: row.pr_action,
       }
     : DEFAULT_CONFIG;
+
+/** What this user's pipeline runs cost since midnight UTC (their cost is written as they run). */
+export const RUNS_TODAY_SQL = `SELECT coalesce(sum(cost_usd), 0) AS usd FROM runs
+ WHERE user_id = $1 AND started_at >= date_trunc('day', now(), 'UTC')`;
 
 /** Tokens used since midnight UTC, per model. Row-level security limits it to one user. */
 export const TODAY_SQL = `SELECT model, coalesce(sum(input_tokens), 0) AS input, coalesce(sum(output_tokens), 0) AS output
@@ -90,6 +102,7 @@ export function configProblem(c: AgentConfig): string | null {
     return "The time limit must be a whole number from 1 to 120 minutes.";
   if (!TONES.some((t) => t.id === c.tone)) return "Choose a tone.";
   if (!SCHEDULES.some((s) => s.id === c.schedule)) return "Choose a schedule.";
+  if (!PR_ACTIONS.includes(c.prAction)) return "Choose a PR action.";
   if (
     typeof c.instructions !== "string" ||
     c.instructions.length > MAX_INSTRUCTIONS

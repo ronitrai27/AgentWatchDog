@@ -3,6 +3,7 @@
 import { CheckIcon } from "lucide-react";
 import Image from "next/image";
 import { useState } from "react";
+import { saveTriggerSelection } from "@/app/(app)/home/actions";
 import { Select } from "@/components/setup/select";
 
 const REPORT_CHANNELS = [
@@ -201,30 +202,48 @@ function ProviderBadge({
   );
 }
 
-export function WorkflowPanel({ visible }: { visible: boolean }) {
+export function WorkflowPanel({
+  visible,
+  saved,
+}: {
+  visible: boolean;
+  /** The triggers saved for this user; null when none were saved yet (defaults apply). */
+  saved: string[] | null;
+}) {
   const [channel, setChannel] = useState<ReportChannel>("slack");
   const [selected, setSelected] = useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {};
     for (const provider of TRIGGER_PROVIDERS) {
       for (const trigger of provider.triggers) {
-        initial[trigger.id] = Boolean(trigger.defaultEnabled);
+        initial[trigger.id] = saved
+          ? saved.includes(trigger.id)
+          : Boolean(trigger.defaultEnabled);
       }
     }
     return initial;
   });
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  /** Every change is saved at once: the webhook routes read it to decide whether Rox wakes. */
+  const apply = (next: Record<string, boolean>) => {
+    setSelected(next);
+    setSaveError(null);
+    void saveTriggerSelection(Object.keys(next).filter((id) => next[id])).then(
+      (r) => {
+        if (!r.ok) setSaveError(r.error);
+      },
+    );
+  };
 
   if (!visible) return null;
 
-  const toggle = (id: string) =>
-    setSelected((prev) => ({ ...prev, [id]: !prev[id] }));
+  const toggle = (id: string) => apply({ ...selected, [id]: !selected[id] });
 
   const toggleProvider = (provider: TriggerProvider) => {
     const allOn = provider.triggers.every((t) => selected[t.id]);
-    setSelected((prev) => {
-      const next = { ...prev };
-      for (const t of provider.triggers) next[t.id] = !allOn;
-      return next;
-    });
+    const next = { ...selected };
+    for (const t of provider.triggers) next[t.id] = !allOn;
+    apply(next);
   };
 
   const totalEnabled = Object.values(selected).filter(Boolean).length;
@@ -276,6 +295,9 @@ export function WorkflowPanel({ visible }: { visible: boolean }) {
             <p className="mt-0.5 text-[13px] text-ink/60">
               Choose which events wake Rox to investigate and fix issues.
             </p>
+            {saveError && (
+              <p className="mt-1 text-[13px] text-red-700">{saveError}</p>
+            )}
           </div>
           <span className="rounded-full border border-ink/20 bg-paper px-2.5 py-0.5 text-[12px] font-medium tabular-nums text-ink">
             {totalEnabled} active

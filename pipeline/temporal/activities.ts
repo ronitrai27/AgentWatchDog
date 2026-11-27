@@ -8,43 +8,30 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { Context } from "@temporalio/activity";
+import { ApplicationFailure } from "@temporalio/common";
 import {
-  analyzeStep,
-  type GateStep,
-  gateStep,
-} from "../../Tests/Agent_2/analyze";
-import { CASES as CASES2 } from "../../Tests/Agent_2/cases";
+  type IncidentFacts,
+  incidentFacts,
+  sentryFromEnv,
+} from "../../agent/src/integrations/sentry";
+import { analyzeStep, type GateStep, gateStep } from "../agent/analyze";
+import { CASES } from "../agent/cases";
 import {
   loadAnalysis,
   outgoingCalls,
   type Plan2Item,
   planChecks2,
-} from "../../Tests/Agent_2/check-plan";
-import { checkpoints as checkpoints2 } from "../../Tests/Agent_2/checkpoints";
-import { runCheck2 } from "../../Tests/Agent_2/checks2";
-import { type HuntResult, runHunt } from "../../Tests/Agent_2/hunt";
-import { startCase as startCase2 } from "../../Tests/Agent_2/lab-run";
-import {
-  commitFiles as commitFiles2,
-  filesFrom as filesFrom2,
-  openPullRequest as openPullRequest2,
-} from "../../Tests/Agent_2/publish";
-import { runFix as runFix2 } from "../../Tests/Agent_2/run";
-import { serviceGates as serviceGates2 } from "../../Tests/Agent_2/service-gates";
-import { Workspace as Workspace2 } from "../../Tests/Agent_2/workspace";
-import { CASES } from "../../Tests/src/agent/cases";
-import { checkpoints } from "../../Tests/src/agent/checkpoints";
-import type { Publisher } from "../../Tests/src/agent/graph";
-import { REPO, startCase } from "../../Tests/src/agent/lab-run";
-import { type ReportTarget, sendRunNote } from "../../Tests/src/agent/notify";
-import {
-  commitFiles,
-  filesFrom,
-  openPullRequest,
-} from "../../Tests/src/agent/publish";
-import { type FixResult, runFix } from "../../Tests/src/agent/run";
-import { serviceGates } from "../../Tests/src/agent/service-gates";
-import { Workspace } from "../../Tests/src/agent/workspace";
+} from "../agent/check-plan";
+import { checkpoints } from "../agent/checkpoints";
+import { runCheck2 } from "../agent/checks2";
+import type { Publisher } from "../agent/graph";
+import { type HuntResult, runHunt } from "../agent/hunt";
+import { REPO, startCase } from "../agent/lab-run";
+import { type ReportTarget, sendRunNote } from "../agent/notify";
+import { commitFiles, filesFrom, openPullRequest } from "../agent/publish";
+import { type FixResult, runFix } from "../agent/run";
+import { serviceGates } from "../agent/service-gates";
+import { Workspace } from "../agent/workspace";
 import {
   type CheckResult,
   type Installed,
@@ -53,11 +40,27 @@ import {
   planChecks,
   type RunInput,
   runCheck,
-} from "../../Tests/src/checks";
-import { destroyRun, ensureVolume } from "../../Tests/src/docker";
-import { cacheDir, runDir } from "../../Tests/src/env";
-import { emit, readEvents } from "../../Tests/src/events";
-import { appApi, writeToken } from "../../Tests/src/github";
+} from "../src/checks";
+import { destroyRun, ensureVolume } from "../src/docker";
+import { cacheDir, runDir } from "../src/env";
+import { emit, readEvents } from "../src/events";
+import { appApi, mergePullRequest, writeToken } from "../src/github";
+import {
+  finishRun,
+  markMerged,
+  type RunOrigin,
+  recordSettings,
+  setRunOutcome,
+  setRunStatus,
+  startRun,
+} from "../src/runs";
+import {
+  dayLeftUsd,
+  type RunSettings,
+  runModels,
+  runSettings,
+  SettingsError,
+} from "../src/settings";
 import {
   changedFiles,
   checkout,
@@ -66,9 +69,16 @@ import {
   loadVolume,
   readFacts,
   volumes,
-} from "../../Tests/src/source";
+} from "../src/source";
 
-export type LabInput = RunInput & { workflowId: string; title: string | null };
+export type LabInput = RunInput & {
+  workflowId: string;
+  title: string | null;
+  /** Who and what started the run; recorded in the runs table. */
+  origin?: RunOrigin;
+  /** The user's settings for this run (model, budget, time limit, PR action). Never a key. */
+  settings?: RunSettings;
+};
 
 function beating<T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const ctx = Context.current();
@@ -79,11 +89,42 @@ function beating<T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> {
 
 const attempt = () => Context.current().info.attempt;
 
+/**
+ * The user's settings for this run: their model, day budget, time limit and PR action. A missing
+ * choice is not retried: it fails the run at once with what to set.
+ */
+export async function labSettings(userId: string | null): Promise<RunSettings> {
+  try {
+    return await runSettings(userId);
+  } catch (error) {
+    if (error instanceof SettingsError)
+      throw ApplicationFailure.nonRetryable(error.message, "SettingsError");
+    throw error;
+  }
+}
+
 export async function labPrepare(
   input: LabInput,
 ): Promise<{ plan: PlanItem[]; facts: Facts }> {
   return beating(async () => {
     const started = Date.now();
+    await startRun({
+      run: input.run,
+      workflowId: input.workflowId,
+      origin: input.origin ?? { source: "cli", invokedBy: "cli" },
+      repo: input.repo,
+      pr: input.pr ?? null,
+      head: input.head,
+      base: input.base ?? null,
+      title: input.title,
+    });
+    if (input.settings)
+      await recordSettings(input.run, {
+        modelId: input.settings.modelId,
+        prAction: input.settings.prAction,
+        dayBudgetUsd: input.settings.dayBudgetUsd,
+        leftUsd: await dayLeftUsd(input.settings.userId),
+      });
     await emit(input.run, {
       step: "run",
       kind: "run.started",
@@ -220,7 +261,7 @@ export async function labCheck(
  */
 export async function labNote(
   input: Pick<LabInput, "run" | "repo" | "pr"> & { report: ReportTarget },
-  kind: "checked" | "crashed" | "aborted",
+  kind: "checked" | "crashed" | "aborted" | "timed_out",
   results: CheckResult[],
   reason: string | null,
 ): Promise<void> {
@@ -230,34 +271,41 @@ export async function labNote(
   );
   const passed = results.filter((r) => r.status === "pass").length;
   const lines =
-    kind === "aborted"
+    kind === "timed_out"
       ? [
-          `The run was stopped by hand: ${reason ?? "no reason given"}`,
-          "Its sandbox was destroyed. No pull request was opened.",
+          `The run passed its time limit and was stopped: ${reason ?? ""}`,
+          "Its sandbox was destroyed. No pull request was opened. Raise Max time per run in Settings > Agent if runs need longer.",
         ]
-      : kind === "crashed"
+      : kind === "aborted"
         ? [
-            `Rox hit a problem of its own (not in your code) and stopped: ${reason ?? "unknown error"}`,
-            `${passed} checks had passed before it stopped. No pull request was opened.`,
+            `The run was stopped by hand: ${reason ?? "no reason given"}`,
+            "Its sandbox was destroyed. No pull request was opened.",
           ]
-        : [
-            reason
-              ? `The dependencies could not be installed, so Rox could not run the code: ${reason}`
-              : "Tests and the type checker pass, so there is no bug for Rox to fix. No pull request was opened.",
-            `${passed} of ${results.length} checks passed.`,
-            ...failed.map(
-              (r) =>
-                `${r.title}: ${r.status}, ${r.summary.replace(/\s+/g, " ").slice(0, 180)}`,
-            ),
-          ];
+        : kind === "crashed"
+          ? [
+              `Rox hit a problem of its own (not in your code) and stopped: ${reason ?? "unknown error"}`,
+              `${passed} checks had passed before it stopped. No pull request was opened.`,
+            ]
+          : [
+              reason
+                ? `The dependencies could not be installed, so Rox could not run the code: ${reason}`
+                : "Tests and the type checker pass, so there is no bug for Rox to fix. No pull request was opened.",
+              `${passed} of ${results.length} checks passed.`,
+              ...failed.map(
+                (r) =>
+                  `${r.title}: ${r.status}, ${r.summary.replace(/\s+/g, " ").slice(0, 180)}`,
+              ),
+            ];
   await sendRunNote(input.report, {
     run: input.run,
     headline:
-      kind === "aborted"
-        ? `Rox run on ${where} was aborted`
-        : kind === "crashed"
-          ? `Rox stopped on ${where}: an error of its own`
-          : `Rox checked ${where}: nothing for it to fix`,
+      kind === "timed_out"
+        ? `Rox run on ${where} hit its time limit`
+        : kind === "aborted"
+          ? `Rox run on ${where} was aborted`
+          : kind === "crashed"
+            ? `Rox stopped on ${where}: an error of its own`
+            : `Rox checked ${where}: nothing for it to fix`,
     lines,
     link: input.pr
       ? `https://github.com/${input.repo}/pull/${input.pr}`
@@ -297,6 +345,15 @@ export async function labFinish(
       ...(reason ? { reason } : {}),
     },
   });
+  await finishRun(
+    input.run,
+    outcome === "completed"
+      ? "succeeded"
+      : outcome === "cancelled"
+        ? "cancelled"
+        : "failed",
+    reason,
+  );
 }
 
 export type FixInput = {
@@ -318,16 +375,12 @@ export type FixInput = {
     | { repo: string; kind: "seeded" };
   /** Where the final report goes (the user's choice in Connections); without it, nowhere. */
   report?: ReportTarget;
-  /** Which test agent fixes: 1 is Tests/src/agent (the default), 2 is Tests/Agent_2. */
-  agent?: 1 | 2;
+  /** The user's settings for this run: their model, and whether Rox merges its own fix. */
+  settings: RunSettings;
 };
 
-/**
- * The parts of one test agent that labFix uses. Agent_2 starts as a copy of agent 1, so its kit is
- * typed as agent 1's; the cast keeps the two copies' Workspace classes from clashing. Once Agent_2's
- * runFix, FixResult or Workspace change shape, give it its own typed kit here.
- */
-const KIT1 = {
+/** The pipeline agent (a copy of Tests/Agent_2) and the parts of it labFix uses. */
+const KIT = {
   CASES,
   startCase,
   Workspace,
@@ -338,19 +391,7 @@ const KIT1 = {
   filesFrom,
   openPullRequest,
 };
-type Kit = typeof KIT1;
-const KIT2 = {
-  CASES: CASES2,
-  startCase: startCase2,
-  Workspace: Workspace2,
-  runFix: runFix2,
-  serviceGates: serviceGates2,
-  checkpoints: checkpoints2,
-  commitFiles: commitFiles2,
-  filesFrom: filesFrom2,
-  openPullRequest: openPullRequest2,
-} as unknown as Kit;
-const kitOf = (agent: FixInput["agent"]): Kit => (agent === 2 ? KIT2 : KIT1);
+type Kit = typeof KIT;
 
 /** For a seeded bug: a branch with the bug, made from main, for the fix to be proposed to. */
 async function seededBranch(
@@ -404,15 +445,15 @@ export async function labFix(input: FixInput): Promise<FixResult> {
   return beating(async (signal) => {
     const { run } = input;
     const repo = input.repo ?? REPO;
-    const kit = kitOf(input.agent);
-    const agentName = input.agent === 2 ? "Agent_2" : "agent 1";
+    const kit = KIT;
     await emit(run, {
       step: "agent",
       kind: "agent.started",
-      title: `${input.caseId ? `Seeded bug ${input.caseId}` : "Fixing the failures"} (${agentName})`,
+      title: input.caseId
+        ? `Seeded bug ${input.caseId}`
+        : "Fixing the failures",
       status: "running",
       attempt: attempt(),
-      data: { agent: input.agent ?? 1 },
     });
     let workspace: () => Promise<Workspace>;
     let fresh: () => Promise<Workspace>;
@@ -500,6 +541,8 @@ export async function labFix(input: FixInput): Promise<FixResult> {
             () => "",
           )
         : "";
+    const { settings } = input;
+    const models = await runModels(settings.userId, settings.modelId);
     const result = await kit.runFix(
       { run, workspaces, change },
       { workspace, fresh },
@@ -509,11 +552,78 @@ export async function labFix(input: FixInput): Promise<FixResult> {
         publish,
         report: input.report,
         repo,
+        models,
+        leftUsd: await dayLeftUsd(settings.userId),
         services: ({ copy, attempt }) =>
-          kit.serviceGates({ run, repo, attempt, copy, source, signal }),
+          kit.serviceGates({
+            run,
+            repo,
+            attempt,
+            copy,
+            source,
+            signal,
+            decide: models.decide,
+          }),
       },
     );
+    // Merge PR (Settings > Agent): Rox merges its own verified fix, then says so. Code decides
+    // this from the user's setting; no model can ask for it.
+    if (
+      settings.prAction === "merge_pr" &&
+      result.outcome === "fixed" &&
+      result.pr
+    ) {
+      const pr = result.pr;
+      const target = input.publish?.repo ?? repo;
+      try {
+        const sha = await mergePullRequest(
+          target,
+          pr.number,
+          `fix: Rox run ${run.slice(0, 8)}`,
+        );
+        await markMerged(run);
+        await emit(run, {
+          step: "publish",
+          kind: "pr.merged",
+          title: `Merged pull request #${pr.number} (${sha.slice(0, 7)}), as chosen in Settings > Agent`,
+          status: "pass",
+          data: { url: pr.url, sha },
+        });
+        if (input.report)
+          await sendRunNote(input.report, {
+            run,
+            headline: `Rox merged its fix: ${target} #${pr.number}`,
+            lines: [
+              "Every check passed and the reviewer accepted it.",
+              "Merged without waiting for a human, because Merge PR is on in Settings > Agent.",
+              `Merge commit ${sha.slice(0, 7)}.`,
+            ],
+            link: pr.url,
+          });
+      } catch (error) {
+        const why = error instanceof Error ? error.message : String(error);
+        await emit(run, {
+          step: "publish",
+          kind: "pr.merge_failed",
+          title: `Could not merge #${pr.number}; it stays open for a human: ${why.slice(0, 200)}`,
+          status: "error",
+        });
+        if (input.report)
+          await sendRunNote(input.report, {
+            run,
+            headline: `Rox could not merge ${target} #${pr.number}`,
+            lines: [
+              `GitHub said: ${why.slice(0, 300)}`,
+              "The pull request stays open for you to merge.",
+            ],
+            link: pr.url,
+          });
+      }
+    }
     await mkdir(runDir(run), { recursive: true });
+    await setRunOutcome(run, result.outcome, result.pr?.url ?? null);
+    // A seeded lab case has no labFinish: the fix agent's end is the run's end.
+    if (input.caseId) await finishRun(run, "succeeded", null);
     const patch = result.attempts.at(-1)?.patch ?? "";
     if (result.outcome === "fixed")
       await writeFile(path.join(runDir(run), "fix.patch"), patch);
@@ -529,6 +639,8 @@ export async function labMark(
   title: string,
 ): Promise<void> {
   await emit(run, { step: "run", kind, title });
+  if (kind === "run.paused") await setRunStatus(run, "paused");
+  if (kind === "run.resumed") await setRunStatus(run, "running");
 }
 
 /**
@@ -565,6 +677,7 @@ export async function labDestroy(
     ms: Date.now() - t0,
     data: { at, why, lastEvent: last?.kind ?? null },
   });
+  await finishRun(run, "aborted", `${why} (stopped at: ${at})`);
   return at;
 }
 
@@ -582,9 +695,11 @@ export async function labCleanup(input: Pick<LabInput, "run">): Promise<void> {
     title: `Sandbox destroyed: ${removed.containers} containers, ${removed.networks} networks, ${removed.volumes} volumes`,
     data: removed,
   });
+  // Only when nothing recorded the end before (a crashed lab case): never leave a run "running".
+  await finishRun(input.run, "failed", "the run ended without saying how");
 }
 
-// --- Agent_2 (Tests/Agent_2): language gate, code index, check plan, its checks, security hunt.
+// --- The pipeline agent: language gate, code index, check plan, its checks, security hunt.
 // Every one of these ends normally even when something inside fails: the failure is written to
 // the trace and the run goes on with a safe fallback (the shared plan, no hunt).
 
@@ -834,17 +949,19 @@ export async function agent2Hunt(input: LabInput): Promise<HuntResult | null> {
               () => "",
             )
           : "";
-        let ws: Workspace2 | null = null;
+        let ws: Workspace | null = null;
         const workspace = async () => {
           if (ws) return ws;
-          const w = new Workspace2(input.run, "verify");
+          const w = new Workspace(input.run, "verify");
           await w.close();
           await w.open();
           ws = w;
           return w;
         };
         try {
-          const checkpointer = await checkpoints2().catch(() => undefined);
+          const checkpointer = await checkpoints().catch(() => undefined);
+          const settings =
+            input.settings ?? (await runSettings(input.origin?.userId));
           return await runHunt({
             run: input.run,
             diff,
@@ -852,11 +969,56 @@ export async function agent2Hunt(input: LabInput): Promise<HuntResult | null> {
             workspace,
             checkpointer,
             signal,
+            models: await runModels(settings.userId, settings.modelId),
+            leftUsd: await dayLeftUsd(settings.userId),
           });
         } finally {
-          if (ws) await (ws as Workspace2).close().catch(() => {});
+          if (ws) await (ws as Workspace).close().catch(() => {});
         }
       },
     ),
   );
+}
+
+// ---------- Sentry incidents ----------
+
+export type IncidentInput = {
+  run: string;
+  repo: string | null;
+  trigger: string;
+  why: string;
+  issueId: string;
+  title: string;
+  link: string | null;
+  report: ReportTarget | null;
+};
+
+/**
+ * First step of a Sentry incident run: reads the issue's latest event from Sentry (exception,
+ * the in-app frame where it broke, release, service) and tells the user's channel. Event text is
+ * data: it is only quoted, never followed.
+ */
+export async function incidentBrief(
+  input: IncidentInput,
+): Promise<IncidentFacts> {
+  const sentry = sentryFromEnv();
+  if (!sentry)
+    throw new Error("SENTRY_AUTH_TOKEN and SENTRY_ORG are not set in .env");
+  const facts = await incidentFacts(sentry, input.issueId);
+  if (input.report)
+    await sendRunNote(input.report, {
+      run: input.run,
+      headline: `Sentry ${input.trigger.replace("sentry:", "").replace("_", " ")}: ${facts.title}`,
+      lines: [
+        `Why Rox woke up: ${input.why}`,
+        ...(input.repo ? [`Repository: ${input.repo}`] : []),
+        ...(facts.exception ? [`Exception: ${facts.exception}`] : []),
+        ...(facts.frame ? [`Where: ${facts.frame}`] : []),
+        ...(facts.service ? [`Service: ${facts.service}`] : []),
+        ...(facts.release ? [`Release: ${facts.release}`] : []),
+        ...(facts.environment ? [`Environment: ${facts.environment}`] : []),
+      ],
+      link: input.link ?? facts.link ?? undefined,
+    });
+  return facts;
 }

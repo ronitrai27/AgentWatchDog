@@ -17,7 +17,6 @@
   },
   "include": [
     "src/**/*.ts",
-    "temporal/**/*.ts",
     "../src/lib/models.ts",
     "../src/lib/vault.ts"
   ]

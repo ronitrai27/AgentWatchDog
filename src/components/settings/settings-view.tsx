@@ -116,12 +116,15 @@ export function SettingsView({
   spentTodayUsd,
   workspace,
   keys,
+  triggers,
 }: {
   /** Null when the saved config could not be read. */
   initial: AgentConfig | null;
   spentTodayUsd: number;
   workspace: ReactNode;
   keys: ReactNode;
+  /** Saved invocation triggers; null when none were saved yet. */
+  triggers: string[] | null;
 }) {
   const asked = useSearchParams().get("tab");
   const tab = TABS.find((t) => t.id === asked) ?? TABS[0];
@@ -187,7 +190,7 @@ export function SettingsView({
                 spentTodayUsd={spentTodayUsd}
               />
             )}
-            <WorkflowPanel visible={tab.id === "workflow"} />
+            <WorkflowPanel visible={tab.id === "workflow"} saved={triggers} />
           </div>
         </div>
       </div>
@@ -205,7 +208,6 @@ function ConfigForm({
   initial: AgentConfig;
   spentTodayUsd: number;
 }) {
-  const [prAction, setPrAction] = useState<PrMergeAction>("open_pr");
   const [confirmMerge, setConfirmMerge] = useState(false);
   const [saved, setSaved] = useState(initial);
   const [config, setConfig] = useState(initial);
@@ -216,6 +218,9 @@ function ConfigForm({
     null,
   );
   const [saving, startSaving] = useTransition();
+  // Saved with the rest: the pipeline reads it when a fix is verified.
+  const prAction = config.prAction;
+  const setPrAction = (a: PrMergeAction) => change({ prAction: a });
 
   useEffect(() => {
     if (!confirmMerge) return;

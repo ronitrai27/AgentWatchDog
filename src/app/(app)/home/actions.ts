@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { type AgentConfig, configProblem } from "@/lib/agent-config";
 import { writeAgentConfig } from "@/lib/agent-config-store";
 import { db } from "@/lib/db";
+import { invalidateInsights } from "@/lib/insights";
 import {
   DEMO_REPO,
   findModel,
@@ -20,8 +21,13 @@ import {
   type SlackCheck,
   saveSlackConnection,
 } from "@/lib/report-connections";
+import {
+  checkSentry,
+  type SentryCheck,
+  saveSentryConnection,
+  saveTriggers,
+} from "@/lib/sentry-connection";
 import { getSession } from "@/lib/session";
-import { invalidateInsights } from "@/lib/insights";
 import { listRepos } from "@/lib/setup";
 import { recordAudit } from "@/lib/users";
 import { encryptSecret } from "@/lib/vault";
@@ -285,6 +291,7 @@ export async function saveAgentConfig(input: AgentConfig): Promise<Result> {
     tone: input.tone,
     instructions: input.instructions.trim(),
     schedule: input.schedule,
+    prAction: input.prAction,
   };
   try {
     await writeAgentConfig(session.uid, config);
@@ -356,5 +363,76 @@ export async function disconnectReport(provider: string): Promise<Result> {
   }
   await audit(session.uid, "connection.removed", { provider });
   revalidatePath("/home/connections");
+  return { ok: true };
+}
+
+// ---------- Sentry (wakes Rox) and the invocation triggers ----------
+
+/** Checks the Sentry token in .env and lists the projects it can see. */
+export async function checkSentryConnection(): Promise<
+  Result<{ check: SentryCheck }>
+> {
+  const session = await getSession();
+  if (!session) return SIGNED_OUT;
+  return { ok: true, check: await checkSentry() };
+}
+
+/** Connects one Sentry project: its webhooks will wake Rox for this user. */
+export async function connectSentry(projectId: string): Promise<Result> {
+  const session = await getSession();
+  if (!session) return SIGNED_OUT;
+  const check = await checkSentry();
+  if (!check.ready || !check.org)
+    return { ok: false, error: check.error ?? "Sentry is not ready." };
+  // The project must be one the token really sees; the browser's word is not enough.
+  const project = check.projects.find((p) => p.id === projectId);
+  if (!project)
+    return { ok: false, error: "The Sentry token cannot see that project." };
+  try {
+    await saveSentryConnection(session.uid, {
+      org: check.org,
+      project: project.slug,
+      projectId: project.id,
+    });
+  } catch {
+    return {
+      ok: false,
+      error:
+        "Could not save. Another Rox user may have connected this project already.",
+    };
+  }
+  await audit(session.uid, "connection.sentry", {
+    org: check.org,
+    project: project.slug,
+  });
+  revalidatePath("/home/connections");
+  return { ok: true };
+}
+
+export async function disconnectSentry(): Promise<Result> {
+  const session = await getSession();
+  if (!session) return SIGNED_OUT;
+  try {
+    await saveSentryConnection(session.uid, null);
+  } catch {
+    return NOT_SAVED;
+  }
+  await audit(session.uid, "connection.removed", { provider: "sentry" });
+  revalidatePath("/home/connections");
+  return { ok: true };
+}
+
+/** Saves which events wake Rox. Only ids Rox knows are kept. */
+export async function saveTriggerSelection(ids: string[]): Promise<Result> {
+  const session = await getSession();
+  if (!session) return SIGNED_OUT;
+  const known = /^(github|sentry|vercel|betterstack|grafana):[a-z_]+$/;
+  const clean = [...new Set(ids.filter((id) => known.test(id)))].slice(0, 50);
+  try {
+    await saveTriggers(session.uid, clean);
+  } catch {
+    return NOT_SAVED;
+  }
+  await audit(session.uid, "triggers.saved", { triggers: clean });
   return { ok: true };
 }

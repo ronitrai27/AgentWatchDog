@@ -11,6 +11,8 @@ import type {
   ReportConnection,
   ReportProvider,
 } from "@/lib/report-connections";
+import type { SentryConnection } from "@/lib/sentry-connection";
+import { SentryDialog } from "./sentry-dialog";
 import { SLACK_CAPABILITIES, SlackDialog } from "./slack-dialog";
 
 type Category = "Observability" | "Deploys & Cloud" | "Workflow";
@@ -198,24 +200,32 @@ function ConnectorTile({
 export function ConnectionsView({
   repo,
   slack,
+  sentry,
   reportTo,
 }: {
   repo: string | null;
   slack: ReportConnection | null;
+  sentry: SentryConnection | null;
   reportTo: ReportProvider | null;
 }) {
   const [demo, setDemo] = useState<Record<string, boolean>>(() => ({
     github: repo !== null,
-    sentry: true,
   }));
   const [slackOpen, setSlackOpen] = useState(false);
-  // Slack is real: its state comes from the server, never from a local toggle.
-  const enabled: Record<string, boolean> = { ...demo, slack: slack !== null };
+  const [sentryOpen, setSentryOpen] = useState(false);
+  // Slack and Sentry are real: their state comes from the server, never from a local toggle.
+  const enabled: Record<string, boolean> = {
+    ...demo,
+    slack: slack !== null,
+    sentry: sentry !== null,
+  };
 
   const toggle = (id: string) =>
     id === "slack"
       ? setSlackOpen(true)
-      : setDemo((prev) => ({ ...prev, [id]: !prev[id] }));
+      : id === "sentry"
+        ? setSentryOpen(true)
+        : setDemo((prev) => ({ ...prev, [id]: !prev[id] }));
 
   const _activeCount = Object.values(enabled).filter(Boolean).length;
 
@@ -404,6 +414,11 @@ export function ConnectionsView({
                       {reportTo === "slack" ? " · gets the final report" : ""}
                     </p>
                   )}
+                  {item.id === "sentry" && sentry && (
+                    <p className="mt-2 text-[12px] font-medium text-green-900">
+                      {sentry.org} · {sentry.project} · wakes Rox
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex items-center justify-between rounded-b-xl border-t border-ink/18 bg-paper/45 px-5 py-2.5">
@@ -431,6 +446,12 @@ export function ConnectionsView({
 
       {slackOpen && (
         <SlackDialog connection={slack} onClose={() => setSlackOpen(false)} />
+      )}
+      {sentryOpen && (
+        <SentryDialog
+          connection={sentry}
+          onClose={() => setSentryOpen(false)}
+        />
       )}
     </div>
   );

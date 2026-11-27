@@ -141,7 +141,9 @@ export async function POST(request: Request) {
       };
       void reportTarget(userId)
         .catch(() => null)
-        .then((report) => startPrRun({ ...run, report }))
+        .then((report) =>
+          startPrRun({ ...run, report, userId, eventId: delivery }),
+        )
         .then(
           (s) =>
             console.log(

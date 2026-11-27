@@ -7,15 +7,16 @@
 //   pnpm lab case <seeded bug> [--publish] [--wait]
 // Add --fix to start to let the agent fix what failed, --full for the slow checks,
 // --slack <channel id> to send the final report to that Slack channel.
-// Add --agent 2 to start or case to use Tests/Agent_2 instead of the original agent. It gets its
-// own workflow id, so the same pull request or seeded bug can run on both agents side by side.
+// Every run uses the pipeline agent (pipeline/agent, the Agent_2 clone) with the settings of the
+// Rox user who chose --repo (or --user <id>): their model, day budget, time limit and PR action.
 import {
   Client,
   Connection,
   WorkflowIdReusePolicy,
   WorkflowNotFoundError,
 } from "@temporalio/client";
-import { commitSha, pullInfo } from "../../Tests/src/github";
+import { db } from "../src/db";
+import { commitSha, pullInfo } from "../src/github";
 import { LAB_TASK_QUEUE, TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE } from "./config";
 import { abortRun, pauseRun, resumeRun } from "./control";
 import { labCase, labChecks, replacedSignal } from "./workflows";
@@ -30,14 +31,26 @@ const repo = flag("repo") ?? "ronitrai27/Testing_SRE_Demo_App";
 const pr = Number(flag("pr"));
 const ref = flag("ref");
 const baseRef = flag("base");
-const agent = flag("agent") === "2" ? 2 : 1;
-if (flag("agent") && !["1", "2"].includes(flag("agent") as string)) {
-  console.error("--agent must be 1 or 2");
-  process.exit(1);
-}
-/** Agent_2's runs get their own workflow ids, so they never replace agent 1's. */
-const agentSuffix = agent === 2 ? ":agent2" : "";
 const VIEWER = "http://127.0.0.1:8790";
+
+/** Whose settings the run uses: --user, or the Rox user who chose this repository. */
+async function owner(): Promise<string> {
+  const given = flag("user");
+  if (given) return given;
+  const { rows } = await db().query<{ user_id: string }>(
+    "SELECT user_id FROM user_setup WHERE lower(repo) = lower($1) LIMIT 2",
+    [repo],
+  );
+  if (rows.length !== 1) {
+    console.error(
+      rows.length
+        ? `Several Rox users chose ${repo}; pass --user <id>.`
+        : `No Rox user chose ${repo}; pass --user <id>, or choose the repository in the setup guide.`,
+    );
+    process.exit(1);
+  }
+  return rows[0].user_id;
+}
 
 /** Stops the running workflow of this pull request, if there is one, and waits for it. */
 async function stopRunning(client: Client, workflowId: string, why: string) {
@@ -62,11 +75,11 @@ async function startSeeded(caseId: string) {
   const client = new Client({ connection, namespace: TEMPORAL_NAMESPACE });
   const handle = await client.workflow.start(labCase, {
     taskQueue: LAB_TASK_QUEUE,
-    workflowId: `lab:case:${caseId}${agentSuffix}`,
+    workflowId: `lab:case:${caseId}`,
     workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE,
-    args: [caseId, args.includes("--publish") ? repo : null, agent],
+    args: [caseId, args.includes("--publish") ? repo : null, await owner()],
   });
-  console.log(`Started ${caseId} (agent ${agent})`);
+  console.log(`Started ${caseId}`);
   console.log(`  run    ${handle.firstExecutionRunId}`);
   console.log(`  watch  ${VIEWER}/runs/${handle.firstExecutionRunId}`);
   if (args.includes("--wait")) {
@@ -95,7 +108,7 @@ async function main() {
   }
   const connection = await Connection.connect({ address: TEMPORAL_ADDRESS });
   const client = new Client({ connection, namespace: TEMPORAL_NAMESPACE });
-  const workflowId = `${pr ? `lab:${repo}#${pr}` : `lab:${repo}@${ref}`}${agentSuffix}`;
+  const workflowId = `${pr ? `lab:${repo}#${pr}` : `lab:${repo}@${ref}`}`;
 
   if (controls.includes(command ?? "")) {
     const why = flag("why") ?? `${command} by hand`;
@@ -149,7 +162,11 @@ async function main() {
         pr: pr || null,
         profile: args.includes("--full") ? "full" : "fast",
         fix: args.includes("--fix"),
-        agent,
+        origin: {
+          source: "cli",
+          invokedBy: "cli" as const,
+          userId: await owner(),
+        },
         ...(flag("slack")
           ? {
               report: {
@@ -162,7 +179,7 @@ async function main() {
       },
     ],
   });
-  console.log(`Started ${workflowId} (agent ${agent})`);
+  console.log(`Started ${workflowId}`);
   console.log(`  run    ${handle.firstExecutionRunId}`);
   console.log(`  watch  ${VIEWER}/runs/${handle.firstExecutionRunId}`);
 

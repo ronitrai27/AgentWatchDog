@@ -4,6 +4,7 @@ import {
   type AgentConfig,
   CONFIG_COLUMNS,
   type ConfigRow,
+  RUNS_TODAY_SQL,
   TODAY_SQL,
   type TodayRow,
   toConfig,
@@ -54,6 +55,10 @@ export type SetupRow = {
   subagent: string | null;
   sandbox: string | null;
   sandboxCheckedAt: Date | null;
+  /** The Sentry project whose webhooks wake Rox for this user; null when not connected. */
+  sentry?: { org: string; project: string; connectedAt: Date } | null;
+  /** The invocation triggers on in Settings > Workflow ("sentry:new_issue", ...). */
+  triggers?: string[];
 };
 
 export type ReportConnectionRow = {
@@ -368,8 +373,13 @@ export function createStore(db: Db) {
           subagent_model: string | null;
           sandbox: string | null;
           sandbox_checked_at: Date | null;
+          sentry_org: string | null;
+          sentry_project: string | null;
+          sentry_connected_at: Date | null;
+          triggers: string[];
         }>(
-          `SELECT repo, repo_installation_id, orchestrator_model, subagent_model, sandbox, sandbox_checked_at
+          `SELECT repo, repo_installation_id, orchestrator_model, subagent_model, sandbox, sandbox_checked_at,
+                  sentry_org, sentry_project, sentry_connected_at, triggers
              FROM user_setup WHERE user_id = $1`,
           [userId],
         );
@@ -385,6 +395,15 @@ export function createStore(db: Db) {
               subagent: r.subagent_model,
               sandbox: r.sandbox,
               sandboxCheckedAt: r.sandbox_checked_at,
+              sentry:
+                r.sentry_org && r.sentry_project && r.sentry_connected_at
+                  ? {
+                      org: r.sentry_org,
+                      project: r.sentry_project,
+                      connectedAt: r.sentry_connected_at,
+                    }
+                  : null,
+              triggers: r.triggers,
             }
           : null;
       });
@@ -400,13 +419,17 @@ export function createStore(db: Db) {
           [userId],
         );
         const today = await c.query<TodayRow>(TODAY_SQL);
+        // Chat turns and pipeline runs share the one day budget.
+        const runs = await c.query<{ usd: string }>(RUNS_TODAY_SQL, [userId]);
         return {
           config: toConfig(config.rows[0]),
-          spentTodayUsd: today.rows.reduce(
-            (sum, r) =>
-              sum + costUsd(r.model, Number(r.input), Number(r.output)),
-            0,
-          ),
+          spentTodayUsd:
+            Number(runs.rows[0]?.usd ?? 0) +
+            today.rows.reduce(
+              (sum, r) =>
+                sum + costUsd(r.model, Number(r.input), Number(r.output)),
+              0,
+            ),
         };
       });
     },

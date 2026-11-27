@@ -1,0 +1,32 @@
+{
+  "name": "rox-pipeline",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Rox's autonomous pipeline: the fix agent (cloned from Tests/Agent_2), its sandbox and its Temporal worker. Started only by triggers (webhooks) or an explicit start, never by the chat.",
+  "scripts": {
+    "worker": "tsx temporal/worker.ts",
+    "lab": "tsx temporal/lab.ts",
+    "image": "docker build -t rox-sandbox:1 sandbox",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@langchain/core": "^1.5.1",
+    "@langchain/langgraph": "^1.7.5",
+    "@langchain/langgraph-checkpoint-postgres": "1.1.4",
+    "@langchain/openai": "^1.8.5",
+    "@temporalio/activity": "^1.26.0",
+    "@temporalio/client": "^1.26.0",
+    "@temporalio/common": "^1.26.0",
+    "@temporalio/worker": "^1.26.0",
+    "@temporalio/workflow": "^1.26.0",
+    "langchain": "^1.6.8",
+    "pg": "^8.23.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}

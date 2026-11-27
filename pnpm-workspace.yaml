@@ -2,6 +2,7 @@ packages:
   - "."
   - "agent"
   - "Tests"
+  - "pipeline"
 
 ignoredBuiltDependencies:
   - sharp

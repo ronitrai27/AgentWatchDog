@@ -219,12 +219,13 @@ test("connections_list: GitHub connected, Slack connectable, the rest not built"
     const slack = list.find((c) => c.id === "slack");
     assert.equal(slack?.status, "not_connected");
     assert.equal(slack?.canBeConnectedNow, true);
-    assert.ok(
-      list
-        .filter((c) => c.id !== "github" && c.id !== "slack")
-        .every((c) => c.status === "not_connected" && !c.canBeConnectedNow),
+    assert.equal(list.find((c) => c.id === "sentry")?.status, "not_connected");
+    // Only what the database knows: no app is listed from a hardcoded list.
+    assert.deepEqual(
+      list.map((c) => c.id),
+      ["github", "slack", "sentry"],
     );
-    assert.match(out.summary, /1 of 8 connected/);
+    assert.match(out.summary, /1 of 3 connected/);
   }
 });
 
@@ -262,19 +263,26 @@ test("connections_list: a saved Slack connection without a bot token is an error
   }
 });
 
-test("connections_list: demo users see the not-built apps in test mode", async () => {
-  const ctx = fakeContext({ store: fakeStore({ user: { isDemo: true } }) });
+test("connections_list: a Sentry project saved in the setup is connected", async () => {
+  const ctx = fakeContext({
+    store: fakeStore({
+      setup: {
+        ...githubSetup,
+        sentry: { org: "acme", project: "web", connectedAt: new Date() },
+        triggers: ["sentry:new_issue"],
+      },
+    }),
+  });
   const out = await call("connections_list", {}, ctx);
   assert.equal(out.ok, true);
   if (out.ok) {
-    const list = (
-      out.output as { connections: { id: string; status: string }[] }
-    ).connections;
-    assert.ok(
-      list
-        .filter((c) => !["slack", "telegram"].includes(c.id))
-        .every((c) => c.status === "test_mode"),
-    );
+    const sentry = (
+      out.output as {
+        connections: { id: string; status: string; detail: string }[];
+      }
+    ).connections.find((c) => c.id === "sentry");
+    assert.equal(sentry?.status, "connected");
+    assert.match(sentry?.detail ?? "", /web in acme.*new_issue/);
   }
 });
 
