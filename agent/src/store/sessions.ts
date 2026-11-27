@@ -56,6 +56,14 @@ export type SetupRow = {
   sandboxCheckedAt: Date | null;
 };
 
+export type ReportConnectionRow = {
+  provider: string;
+  workspace: string | null;
+  channelId: string;
+  channelName: string | null;
+  connectedAt: Date;
+};
+
 export type UserRow = {
   id: string;
   login: string;
@@ -314,6 +322,40 @@ export function createStore(db: Db) {
         return r
           ? { id: r.id, login: r.login, name: r.name, isDemo: r.is_demo }
           : null;
+      });
+    },
+
+    /** Report apps the user connected in Connections, and which one gets the final report. */
+    async getReportConnections(userId: string): Promise<{
+      connections: ReportConnectionRow[];
+      reportTo: string | null;
+    }> {
+      return db.withUser(userId, async (c) => {
+        const { rows } = await c.query<{
+          provider: string;
+          workspace: string | null;
+          channel_id: string;
+          channel_name: string | null;
+          connected_at: Date;
+        }>(
+          `SELECT provider, workspace, channel_id, channel_name, connected_at
+             FROM report_connections WHERE user_id = $1`,
+          [userId],
+        );
+        const setup = await c.query<{ report_to: string | null }>(
+          "SELECT report_to FROM user_setup WHERE user_id = $1",
+          [userId],
+        );
+        return {
+          connections: rows.map((r) => ({
+            provider: r.provider,
+            workspace: r.workspace,
+            channelId: r.channel_id,
+            channelName: r.channel_name,
+            connectedAt: r.connected_at,
+          })),
+          reportTo: setup.rows[0]?.report_to ?? null,
+        };
       });
     },
 

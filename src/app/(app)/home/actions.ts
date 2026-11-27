@@ -102,7 +102,7 @@ export async function saveModels(
   if (!session) return SIGNED_OUT;
 
   const model = findModel(orchestrator);
-  if (!model) return { ok: false, error: "Choose an orchestrator model." };
+  if (!model) return { ok: false, error: "Choose a brain agent model." };
   const sub = findModel(subagent);
   if (!sub) return { ok: false, error: "Choose a sub agent model." };
 

@@ -8,6 +8,17 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { Context } from "@temporalio/activity";
+import { CASES as CASES2 } from "../../Tests/Agent_2/cases";
+import { checkpoints as checkpoints2 } from "../../Tests/Agent_2/checkpoints";
+import { startCase as startCase2 } from "../../Tests/Agent_2/lab-run";
+import {
+  commitFiles as commitFiles2,
+  filesFrom as filesFrom2,
+  openPullRequest as openPullRequest2,
+} from "../../Tests/Agent_2/publish";
+import { runFix as runFix2 } from "../../Tests/Agent_2/run";
+import { serviceGates as serviceGates2 } from "../../Tests/Agent_2/service-gates";
+import { Workspace as Workspace2 } from "../../Tests/Agent_2/workspace";
 import { CASES } from "../../Tests/src/agent/cases";
 import { checkpoints } from "../../Tests/src/agent/checkpoints";
 import type { Publisher } from "../../Tests/src/agent/graph";
@@ -294,10 +305,43 @@ export type FixInput = {
     | { repo: string; kind: "seeded" };
   /** Where the final report goes (the user's choice in Connections); without it, nowhere. */
   report?: ReportTarget;
+  /** Which test agent fixes: 1 is Tests/src/agent (the default), 2 is Tests/Agent_2. */
+  agent?: 1 | 2;
 };
+
+/**
+ * The parts of one test agent that labFix uses. Agent_2 starts as a copy of agent 1, so its kit is
+ * typed as agent 1's; the cast keeps the two copies' Workspace classes from clashing. Once Agent_2's
+ * runFix, FixResult or Workspace change shape, give it its own typed kit here.
+ */
+const KIT1 = {
+  CASES,
+  startCase,
+  Workspace,
+  runFix,
+  serviceGates,
+  checkpoints,
+  commitFiles,
+  filesFrom,
+  openPullRequest,
+};
+type Kit = typeof KIT1;
+const KIT2 = {
+  CASES: CASES2,
+  startCase: startCase2,
+  Workspace: Workspace2,
+  runFix: runFix2,
+  serviceGates: serviceGates2,
+  checkpoints: checkpoints2,
+  commitFiles: commitFiles2,
+  filesFrom: filesFrom2,
+  openPullRequest: openPullRequest2,
+} as unknown as Kit;
+const kitOf = (agent: FixInput["agent"]): Kit => (agent === 2 ? KIT2 : KIT1);
 
 /** For a seeded bug: a branch with the bug, made from main, for the fix to be proposed to. */
 async function seededBranch(
+  kit: Kit,
   repo: string,
   run: string,
   caseId: string,
@@ -313,7 +357,7 @@ async function seededBranch(
   const seeded = await ws.exec(["git", "-C", ws.root, "show", `HEAD:${file}`]);
   if (seeded.code !== 0) throw new Error("could not read the seeded file");
   const branch = `rox-lab/bug-${caseId}-${run.slice(0, 8)}`;
-  await commitFiles(
+  await kit.commitFiles(
     repo,
     token,
     branch,
@@ -325,11 +369,14 @@ async function seededBranch(
 }
 
 const publisher =
-  (target: () => Promise<{ repo: string; base: string }>): Publisher =>
+  (
+    kit: Kit,
+    target: () => Promise<{ repo: string; base: string }>,
+  ): Publisher =>
   async ({ run, ws, title, body, files }) =>
-    openPullRequest(await target(), {
+    kit.openPullRequest(await target(), {
       branch: `rox/fix-${run.slice(0, 8)}`,
-      files: await filesFrom(ws, files),
+      files: await kit.filesFrom(ws, files),
       title,
       body,
       message: `${title}\n\nRox Lab run ${run}`,
@@ -344,14 +391,15 @@ export async function labFix(input: FixInput): Promise<FixResult> {
   return beating(async (signal) => {
     const { run } = input;
     const repo = input.repo ?? REPO;
+    const kit = kitOf(input.agent);
+    const agentName = input.agent === 2 ? "Agent_2" : "agent 1";
     await emit(run, {
       step: "agent",
       kind: "agent.started",
-      title: input.caseId
-        ? `Seeded bug ${input.caseId}`
-        : "Fixing the failures",
+      title: `${input.caseId ? `Seeded bug ${input.caseId}` : "Fixing the failures"} (${agentName})`,
       status: "running",
       attempt: attempt(),
+      data: { agent: input.agent ?? 1 },
     });
     let workspace: () => Promise<Workspace>;
     let fresh: () => Promise<Workspace>;
@@ -359,22 +407,22 @@ export async function labFix(input: FixInput): Promise<FixResult> {
     let source = "";
     let { workspaces } = input;
     if (input.caseId) {
-      const bug = CASES.find((c) => c.id === input.caseId);
+      const bug = kit.CASES.find((c) => c.id === input.caseId);
       if (!bug) throw new Error(`no such seeded bug: ${input.caseId}`);
-      const lab = await startCase(bug, run);
+      const lab = await kit.startCase(bug, run);
       workspaces = [bug.ws];
       workspace = async () => lab.ws;
       fresh = lab.fresh;
       source = lab.source;
       const p = input.publish;
       if (p?.kind === "seeded")
-        publish = publisher(async () => ({
+        publish = publisher(kit, async () => ({
           repo: p.repo,
-          base: await seededBranch(p.repo, run, bug.id, lab.ws, bug.file),
+          base: await seededBranch(kit, p.repo, run, bug.id, lab.ws, bug.file),
         }));
     } else {
       const open = async (kind: "agent" | "verify") => {
-        const ws = new Workspace(run, kind);
+        const ws = new kit.Workspace(run, kind);
         if (kind === "verify") await ws.close();
         await ws.open();
         return ws;
@@ -385,7 +433,10 @@ export async function labFix(input: FixInput): Promise<FixResult> {
       source = volumes(run).work;
       const p = input.publish;
       if (p?.kind === "pr")
-        publish = publisher(async () => ({ repo: p.repo, base: p.branch }));
+        publish = publisher(kit, async () => ({
+          repo: p.repo,
+          base: p.branch,
+        }));
       // The package folders that hold test files. Package.json globs ("apps/*") are not folders.
       const found = await ws.exec([
         "sh",
@@ -436,17 +487,17 @@ export async function labFix(input: FixInput): Promise<FixResult> {
             () => "",
           )
         : "";
-    const result = await runFix(
+    const result = await kit.runFix(
       { run, workspaces, change },
       { workspace, fresh },
       {
-        checkpointer: await checkpoints(),
+        checkpointer: await kit.checkpoints(),
         signal,
         publish,
         report: input.report,
         repo,
         services: ({ copy, attempt }) =>
-          serviceGates({ run, repo, attempt, copy, source, signal }),
+          kit.serviceGates({ run, repo, attempt, copy, source, signal }),
       },
     );
     await mkdir(runDir(run), { recursive: true });

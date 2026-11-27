@@ -3,6 +3,7 @@
 //   updates   what each node finished with
 //   tools     each tool, the moment it succeeds or fails
 //   custom    what a tool itself reports (the plan)
+import { checkInput } from "../guardrails/input";
 import {
   type AIMessage,
   type BaseMessage,
@@ -33,6 +34,9 @@ function blocksOf(message: BaseMessage): { text: string; thinking: string } {
   }
   return { text, thinking };
 }
+
+/** A message the input guardrail stopped. */
+class InputBlocked extends Error {}
 
 export async function runTurn(
   graph: RoxGraph,
@@ -167,6 +171,38 @@ export async function runTurn(
 
   try {
     await record(EVENT.userMessage, { text: run.text });
+    // The input guardrail, shown as a step: a blocked message never reaches the model.
+    const guardCall = `guard-${turnId}`;
+    await record(EVENT.toolRequested, {
+      callId: guardCall,
+      name: "guard_input",
+      title: "Check the message for prompt injection",
+      risk: "read",
+      input: {},
+    });
+    const verdict = await checkInput(run.text, run.signal);
+    await record(
+      EVENT.toolCompleted,
+      {
+        callId: guardCall,
+        name: "guard_input",
+        ok: !verdict.blocked,
+        summary: verdict.blocked
+          ? `Blocked: ${verdict.reason}`
+          : verdict.decisionError
+            ? `Passed the pattern check; the decision model was not used (${verdict.decisionError})`
+            : `Safe (injection ${Math.round((verdict.probability ?? 0) * 100)}%)`,
+        output: JSON.stringify(verdict),
+        ...(verdict.blocked
+          ? { error: { kind: "blocked", message: verdict.reason } }
+          : {}),
+      },
+      verdict.ms,
+    );
+    if (verdict.blocked)
+      throw new InputBlocked(
+        `Blocked by the input guardrail: ${verdict.reason}. The message was not sent to the model.`,
+      );
     const stream = await graph.stream(
       // The model's memory is saved too, so a pasted key must not reach it.
       { messages: [new HumanMessage(redactText(run.text))] },
@@ -224,6 +260,12 @@ export async function runTurn(
         await fail({
           message: `Stopped after ${Math.round(limits.maxWallMs / 1000)} seconds, the time limit for one run. Raise it in Settings > Agent, or break the job into smaller steps.`,
           kind: "limit",
+        });
+      } else if (error instanceof InputBlocked) {
+        await fail({
+          message: error.message,
+          kind: "guardrail",
+          hint: "Rephrase it as an ordinary request. Rox never ignores its rules or reveals secrets.",
         });
       } else if (error instanceof LimitReached) {
         await fail({ message: error.message, kind: "limit" });

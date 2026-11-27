@@ -62,6 +62,8 @@ export type LabStart = Omit<LabInput, "run" | "workflowId"> & {
   prBranch?: string;
   /** Where the agent's final report goes. */
   report?: FixInput["report"];
+  /** Which test agent fixes: 1 (Tests/src/agent, the default) or 2 (Tests/Agent_2). */
+  agent?: FixInput["agent"];
 };
 
 export async function labChecks(start: LabStart): Promise<CheckResult[]> {
@@ -193,6 +195,7 @@ export async function labChecks(start: LabStart): Promise<CheckResult[]> {
           head: input.head,
           base: input.base,
           report: start.report,
+          agent: start.agent,
           ...(start.prBranch
             ? {
                 publish: {
@@ -246,6 +249,7 @@ export async function labChecks(start: LabStart): Promise<CheckResult[]> {
 export async function labCase(
   caseId: string,
   publishTo: string | null = null,
+  agent: FixInput["agent"] = 1,
 ): Promise<FixResult> {
   const { runId } = workflowInfo();
   try {
@@ -253,6 +257,7 @@ export async function labCase(
       run: runId,
       caseId,
       workspaces: [],
+      agent,
       ...(publishTo
         ? { publish: { repo: publishTo, kind: "seeded" as const } }
         : {}),

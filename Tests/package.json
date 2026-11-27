@@ -11,6 +11,10 @@
     "proof:gates": "tsx src/agent/proof-gates.ts",
     "proof:loops": "tsx src/agent/proof-loops.ts",
     "eval": "tsx src/agent/eval.ts",
+    "agent2:proof:tools": "tsx Agent_2/proof-tools.ts",
+    "agent2:proof:gates": "tsx Agent_2/proof-gates.ts",
+    "agent2:proof:loops": "tsx Agent_2/proof-loops.ts",
+    "agent2:eval": "tsx Agent_2/eval.ts",
     "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {

@@ -299,3 +299,153 @@ Times are for the demo app on an idle machine, rounded; on a busy one they were 
 | Writing a new failing test for a PR or CI failure | The failing test already exists; it becomes the frozen contract. Only needed later for Sentry errors |
 | A free shell for the agent | Five small tools are cheaper, safer, and enough |
 | Copying `node_modules` per attempt | Mounted read-only instead: minutes became seconds, and the agent cannot change dependencies |
+
+---
+
+## Agent_2: the upgraded agent (started 2026-11-27)
+
+`Tests/Agent_2/` is a separate copy of the agent in `Tests/src/agent/`. The upgrades below go into Agent_2 only, so the two can be run on the same cases and compared.
+
+**Rules for Agent_2**
+
+1. **The original agent is never touched.** No upgrade edits `Tests/src/agent/` or the real agent in `agent/src` and `src/`.
+2. **Shared, not copied:** the sandbox (`Tests/sandbox/`, image `rox-sandbox:1`), the Temporal workflows (`agent/temporal/`), and the lab's shared code in `Tests/src/` (`checks`, `docker`, `source`, `events`, `stage`, `reports`, `github`, `env`). Agent_2 imports them from `../src/`.
+3. **Upgrades that change shared code get their own file in Agent_2.** Example: U3 adds `Agent_2/check-plan.ts` and does not edit `planChecks` in `Tests/src/checks.ts`. If a shared file really has to change, the change must leave the original agent's behaviour exactly as it was.
+4. **Same models and limits as the original** until an upgrade says otherwise: `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-6-luna` (Decisions API), `RUN_LIMIT_USD`, 3 attempts.
+5. **Every upgrade has a "done when" that is measured on the same cases for both agents** (time, model calls, cost, verdict).
+
+**State at the start:** Agent_2 is a copy of all 21 files in `Tests/src/agent/` (nodes, state, graph, agents, tools, gates, decisions, proofs, eval). Only the import paths differ. `pnpm typecheck` covers both. The proof scripts are available as `agent2:proof:tools`, `agent2:proof:gates`, `agent2:proof:loops` and `agent2:eval`.
+
+**Running Agent_2 through Temporal:** add `--agent 2` to `pnpm lab start` or `pnpm lab case`. Agent 1 stays the default. `labFix` in `agent/temporal/activities.ts` picks the agent's parts (runFix, Workspace, cases, service gates, publish) from a kit per agent. Agent_2's runs get their own workflow id (`…:agent2`), so the same PR or seeded bug can run on both agents side by side. The checks before the fix are still the shared ones from `Tests/src/checks.ts` until U3 adds Agent_2's own check plan.
+
+
+**Why and how, in detail:** see [Agent_2/Upgrade.md](Agent_2/Upgrade.md).
+
+### Agent_2 major upgrades
+
+The principle: **what changed matters, not how many files changed.** Two routes plus an auth file need more checks than 14 UI components.
+
+**Decided 2026-11-27**
+
+- **"What does this change reach" comes from the TypeScript compiler, not Graphify.** The compiler is already a dependency. It resolves imports and types exactly, and it finds every reference to a function, including a function passed as a value (`requireAdmin` handed to a router). A parser without types misses that.
+- **The same compiler reads JavaScript too.** It covers `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs` and `.cjs`, with `allowJs`. In JavaScript without types, some references cannot be resolved (dynamic `require`, objects built at run time). Those are listed as `unresolved`, never guessed.
+- **A route map is written by us** for the frameworks the compiler cannot see through: Express first (the demo app), then Next.js App Router (`app/**/route.ts`, `middleware.ts` + `config.matcher`) and `pages/api`.
+- **One adapter, `CodeIndex`,** serves both the code (reach, check plan, scope gate) and the agents (new read-only tools). If a better engine is needed later, only the adapter changes.
+- **Graphify is not part of U1–U8.** It is an optional experiment (G1 below) that has to prove it finds something the compiler misses.
+- **The Cloudflare security-audit skill is used** for the targeted security hunt (U4). It is adapted, not run as a whole audit.
+
+**U1. Change profile (code only).** New `Agent_2/change.ts` sorts every changed file into kinds:
+`ui`, `server-logic`, `route`, `middleware`, `auth`, `data`, `deps`, `infra`, `config`, `agent-prompt`, `tests`, `docs`.
+
+- **Path rules per repo** in `Tests/fixtures/<repo>/surfaces.json`. For the demo app:
+  - `*.routes.ts` → route
+  - `*.middleware.ts` and `app.ts` → middleware
+  - `modules/identity/**` → auth
+  - `*.repository.ts`, `platform/database/**`, `migrations/**` → data
+  - `apps/web/**` → ui
+- **Content signals** (from the compiler, U2) for files the rules miss: importing `express` / `Router` / `next/server`, using cookies, sessions or jwt, or using the db client.
+- Every extension in the list above counts, not only `.ts`.
+- **Output:** `ChangeProfile { kinds, filesByKind }`, emitted as an event.
+- **Replaces** `touchesServer` (any source file in a service folder) and `touchesRoutes` (a file-name regex that misses `identity.middleware.ts`).
+
+*Done when:* fixture PR A (`identity.middleware.ts` + `catalog.routes.ts`) gives `middleware, auth, route`, and fixture PR B (14 files in `apps/web`) gives `ui` only.
+
+**U2. `CodeIndex`: reach with the TypeScript compiler + route map (code only).** New `Agent_2/code-index/`. It runs in the sandbox, read-only, with no network, from a small script baked into the image beside `tools.mjs`. The original agent's tools are not changed. The script uses TypeScript pinned in the image, so a JavaScript-only repo without its own `typescript` works too.
+
+- **Build:** once per commit. It uses the repo's `tsconfig.json` / `jsconfig.json` when present, otherwise `allowJs` + `jsx: preserve` defaults. It writes `index.json` to `/out`, size-limited and checked to parse.
+  - The base commit's index is cached by commit in `Tests/.cache/index/`.
+  - The head index re-reads only changed files.
+- **Contents:**
+  - every symbol (name, kind, file, line, exported or not)
+  - every reference, each tagged `call`, `value` (passed as an argument or stored), `import` or `type`
+  - the import graph
+  - the route map
+  - an `unresolved` list
+- **Route map:**
+  - Express: `app.use(prefix, router)`, `Router().get/post/put/patch/delete(path, ...middleware, handler)`, chained calls, and which function a parameter is bound to (`createCatalogModule({ requireAdmin: identity.requireRole("admin") })`).
+  - Next.js: `app/**/route.(ts|js)` exports, `middleware.(ts|js)` with `config.matcher`, `pages/api/**`.
+  - Wiring it cannot follow is `unknown`, and unknown counts as "may reach every route".
+- **Reach of a change:**
+  - `changedSymbols`
+  - `callers` (references walked backwards, depth 2, base and head both)
+  - `routes` (endpoints whose handler or middleware chain contains a changed or calling symbol)
+  - `global` (true when the change reaches `app.use(...)` in the composition root, or a Next.js `middleware` whose matcher covers everything)
+  - `unresolved`
+
+*Done when:* on the demo app, a change to `requireRole` reaches `POST`, `PATCH` and `DELETE /v1/products`; a change to `loadUser` gives `global`; a change to a `catalog.service.ts` function reaches only the catalog routes; 14 `apps/web` files reach no API route. The same four answers are checked by hand once.
+
+**U3. A check matrix instead of running everything.** New `Agent_2/check-plan.ts`, chosen by code from the change profile and reach, and used by both the checks before the fix and `verify` (today these use two different rules). Every skip says why in the event stream. The Decisions API may only narrow this list, never widen it.
+
+| Check | Runs when | Today |
+|---|---|---|
+| Biome | Every run, changed files only | `biome check .` |
+| TypeScript, Vitest, Gitleaks | Every run | same |
+| Build | Every run except docs/tests-only | always |
+| Semgrep | Every run with `--baseline-commit <base>`: only new findings fail | whole `/src`, so old findings fail every PR |
+| OSV-Scanner | A manifest or lockfile changed | whenever a lockfile exists |
+| Trivy | Dockerfile, compose, IaC, CI or lockfile changed | always |
+| k6 + performance against the base | `routes > 0` or `global`, and kinds include server-logic, route, middleware or data; never for `ui` only | any source file in the service folder |
+| Schemathesis | route, middleware or auth changed, or the spec changed | file-name regex |
+| Toxiproxy | Reach includes an outgoing call (fetch, an HTTP client, the payment gateway) or timeout/retry code | any source file in the service folder |
+
+*Done when:* PR B runs the every-run checks only and skips k6, the performance comparison, Toxiproxy, Schemathesis, OSV and Trivy, each with a reason; PR A runs k6, the performance comparison and the hunt (U4). Schemathesis stays skipped on the demo app with "no OpenAPI spec".
+
+**U4. Targeted security hunt, a new `hunt` node, adapted from cloudflare/security-audit-skill** (MIT, commit `c1c8a8c`, credited). These blocks are copied word for word into `Agent_2/security-audit/`:
+- "Core hunting method" and "Candidate gate"
+- "Candidate-verifier prompt"
+- the attack classes Access control, Injection and Business logic
+- from WEB-PROTOCOL-AND-AUTH: Core discipline, Session fixation and invalidation, Cookie scope, CSRF, and its Validation rules
+
+Their `report-schema.json` becomes a zod schema, and `validate-findings.cjs` checks the result again.
+
+- **Runs only** when kinds include `auth`, `middleware`, `route`, `data`, `deps`, `infra` or `agent-prompt`. Code decides.
+- **Classes picked by kind, at most 2:**
+
+  | Kind | Attack classes |
+  |---|---|
+  | auth, middleware | Web protocol and auth + Access control |
+  | route | Access control + Injection |
+  | data | Injection + Data isolation |
+  | deps | Supply chain |
+  | infra | Cloud and deployment |
+  | agent-prompt | AI and LLM |
+- **Scope:** the changed symbols, their callers and their routes from `CodeIndex`. Never old code.
+- **Hunters:** at most 3, read-only tools only, `gpt-4.1-nano` to start. If nano misses the planted bug, hunters move to `gpt-4.1-mini`; the evidence bar is never lowered.
+- **Verifier:** one per candidate, `gpt-4.1-mini`, fresh context, told to disprove. It may write and run one test in a throwaway sandbox copy. A failing test is the "bounded local observed result" the skill requires for `confirmed`. Without it the verdict is at most `needs_validation`.
+- **Verdicts:**
+  - `confirmed`: with severity, trace and the test. Fails the security result.
+  - `needs_validation`: exact blocker, no severity. A note in the PR body only.
+  - `rejected`: kept in `findings.json` only.
+- **Limits in code:** model calls per hunter and per verifier, and a hunt cost cap of its own, set after the first measured runs.
+
+*Done when:* on seeded branches of the demo app, a planted `requireRole` bypass is `confirmed` with a test showing a non-admin `PATCH /v1/products/:slug` succeeds; a clean rename in `identity.middleware.ts` gives no `confirmed`; 14 `apps/web` files never start `hunt`.
+
+**U5. Better code tools for the agents (from `CodeIndex`).** In `Agent_2/tools.ts`, read-only, every output capped:
+
+| Tool | What it does | Today |
+|---|---|---|
+| `search_code` (upgraded) | Exact text **or** regex, whole word, case on/off, a folder, a file glob, 2 lines of context; covers every TS/JS extension plus JSON, SQL, YAML and Markdown | exact text only, no `.jsx`, `.cjs`, `.mts`, `.cts` |
+| `find_symbol(name)` | Where a function, class, type or constant is defined | none |
+| `outline_file(path)` | The file's symbols with their lines, instead of reading the whole file | none |
+| `find_references(symbol)` | Every use, each tagged call / value / import / type | none |
+| `reach(symbol or file)` | Callers to depth 2 + the routes it sits on + `global` + `unresolved` | none |
+
+`list_files` and `read_file` stay. The Investigator, the Engineer, the judge and the hunters all get these tools.
+
+*Done when:* on the existing seeded cases, the Investigator reaches the same verdict with fewer model calls and tokens than the original (compare `spend` in the trace).
+
+**U6. Reach-based scope gate in `verify` (code).** A new guard gate.
+- **The rule:** the patch's reach must stay within the reach of the Investigator's evidence files, plus one hop. A patch that reaches further goes to the written reviewer with the extra callers listed; it is not refused outright.
+- **Tiny-patch auto-accept** in `judgeByDecision` also requires `routes ≤ 1` and `global = false`. A one-line change to `loadUser` is never auto-accepted.
+
+*Done when:* a seeded fix that also changes an unrelated caller goes to the reviewer, and a one-line `loadUser` fix is never auto-accepted.
+
+**U7. The reviewer gets the callers.** The judge's prompt includes `reach.callers` and `reach.routes` for the patch, next to the diff.
+*Done when:* the judge makes fewer model calls per review on the existing cases, with the same verdicts.
+
+**U8. A confirmed security finding becomes a fix** (only after U4 passes its cases). The verifier's test becomes the contract: code runs it 5 of 5 times on head. Then the usual `investigate` → `fix` → `verify` → `judge` → `publish` path runs. `verify` also records whether the test fails or passes on the base commit, meaning the hole was already there or this PR added it. Until U4 passes, hunt findings are reported only.
+*Done when:* the planted `requireRole` bypass ends in a pull request with a test that fails before the fix and passes after it.
+
+**G1. Graphify experiment (optional, after U2).** Run `graphify extract . --code-only` on the demo app and compare its reach with `CodeIndex` for the four U2 cases. Graphify is added to the image only if it finds a real caller or route the compiler misses. Otherwise it is dropped. Its hosted MCP, PR reviews and formal verification send code off the machine and are not used.
+
+**Build order:** U1 → U2 → U5 (the tools come straight from U2) → U3 → U6 → U7 → U4 → U8. G1 at any point after U2.

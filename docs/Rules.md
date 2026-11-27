@@ -223,3 +223,82 @@ A chat agent (the brain) listens to the user in the chat UI or Slack.
 It starts, stops or resumes runs (Temporal workflows) and reads their trace.
 It explains what happened in its own words.
 It never does the fixing itself; it stays responsive while a run works in the background. That's also your saved rule: Temporal for background runs, never block the chat agent.
+
+==========================================================================
+## Agent_2
+
+Upgrade points
+
+U0. Language gate (new, runs first, code only)
+
+Before any check or model call, detect what the repo and the PR contain.
+Stop if either:
+the PR changes a source file in another language (.py, .go, .java, .rb, .rs, .php, .cs, .kt, .swift, …), or
+the repo has no package.json and no JS/TS source.
+Don't stop for config, docs or infra files (.json, .yaml, .md, .sql, Dockerfile, .sh in scripts). Those still get Gitleaks, Trivy and Semgrep.
+On stop, Rox reports with a fixed message from code, not from a model: "Sorry, this version of Rox works only on JavaScript and TypeScript (.js, .jsx, .mjs, .cjs, .ts, .tsx, .mts, .cts). Supported frameworks: Express, Fastify, Koa, Hono, NestJS, Next.js (App Router and Pages). Test runners: Vitest, Jest. This change includes <language> files, so I stopped without checking it."
+The run ends as unsupported, with the reason in the trace.
+
+U1. Stack detection + change profile (code only)
+
+Stack detection reads package.json dependencies and config files to find:
+the framework(s)
+the test runner (Vitest or Jest)
+the linter (Biome, ESLint, Prettier)
+the package manager
+the workspaces
+Change profile: each changed file gets kinds like route, middleware, auth, data, ui, deps, infra, config or tests, from:
+built-in rules for common conventions (routes/, controllers/, middleware, app/**/route.ts, pages/api, migrations/, lockfiles, Dockerfile), plus
+code signals (it imports a framework, uses cookies/sessions/jwt, uses a db client).
+No hand-written rules file is needed. An optional per-repo override file exists for unusual layouts.
+
+U2. CodeIndex (TypeScript compiler, code only)
+
+Built once per commit in the sandbox, with base commits cached.
+It holds:
+symbols
+references, each tagged call, value, import or type
+the import graph
+the route map
+an unresolved list
+Route adapters, one per framework:
+Express, Fastify, Koa, Hono
+NestJS (from decorators)
+Next.js App Router (route.ts, middleware.ts with its matcher)
+Next.js Pages (pages/api)
+A JS framework with no adapter isn't a stop: routes count as "unknown", which means "may reach every route", so the checks run.
+Reach of a change: changed symbols, callers to depth 2, routes, whether it affects every route, and what couldn't be followed.
+
+U3. Check plan from stack + kinds + reach
+
+Tools come from the detected stack: Biome or ESLint/Prettier, tsc only if there's a tsconfig, Vitest or Jest, the repo's own build script.
+Semgrep fails only on findings new since the base commit.
+OSV and Trivy run only when dependency or infra files changed.
+k6 and the performance comparison run only when the change reaches routes.
+Schemathesis runs only when routes or auth changed and an OpenAPI spec exists.
+Toxiproxy runs only when the change reaches an outgoing call.
+Every skipped check says why.
+
+U4. Security hunt (Cloudflare skill)
+
+Runs only for auth, middleware, route, data, deps, infra or agent-prompt changes.
+At most 2 attack classes, 3 read-only hunters, and 1 verifier per finding whose job is to disprove it.
+confirmed needs a failing test in the sandbox. Only confirmed fails the PR; needs_validation is a note.
+
+U5. Better agent tools (from CodeIndex)
+
+search_code, upgraded: regex, whole word, folder and file filters, context, all 8 extensions.
+find_symbol, outline_file, find_references, reach.
+
+U6. Scope gate in verify
+
+A fix that reaches beyond the diagnosed area goes to the reviewer.
+A change that affects every route is never auto-accepted.
+
+U7. The reviewer gets the callers and routes along with the diff.
+
+U8. A confirmed security finding becomes a fix: its test becomes the failing test, then the normal fix path runs.
+
+Build order: U0 → U1 → U2 → U5 → U3 → U6 → U7 → U4 → U8.
+
+One decision for you: U0 currently stops only when the PR touches another language. A JS/TS repo with a few Python helper scripts still gets checked, as long as the PR doesn't change them. Or should any non-JS/TS source anywhere in the repo stop Rox? I'd keep it to the PR, otherwise many real JS repos would be refused.

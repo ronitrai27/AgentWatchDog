@@ -57,7 +57,7 @@ export function Thinking({
           <TraceLine status={live ? "running" : undefined}>
             <TraceTitle>{title}</TraceTitle>
             {live && seconds > 0 && (
-              <span className="shrink-0 tabular-nums text-muted-foreground/70">
+              <span className="shrink-0 tabular-nums text-ink-soft/85">
                 {seconds}s
               </span>
             )}

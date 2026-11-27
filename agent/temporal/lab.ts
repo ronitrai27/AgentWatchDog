@@ -7,6 +7,8 @@
 //   pnpm lab case <seeded bug> [--publish] [--wait]
 // Add --fix to start to let the agent fix what failed, --full for the slow checks,
 // --slack <channel id> to send the final report to that Slack channel.
+// Add --agent 2 to start or case to use Tests/Agent_2 instead of the original agent. It gets its
+// own workflow id, so the same pull request or seeded bug can run on both agents side by side.
 import {
   Client,
   Connection,
@@ -28,6 +30,13 @@ const repo = flag("repo") ?? "ronitrai27/Testing_SRE_Demo_App";
 const pr = Number(flag("pr"));
 const ref = flag("ref");
 const baseRef = flag("base");
+const agent = flag("agent") === "2" ? 2 : 1;
+if (flag("agent") && !["1", "2"].includes(flag("agent") as string)) {
+  console.error("--agent must be 1 or 2");
+  process.exit(1);
+}
+/** Agent_2's runs get their own workflow ids, so they never replace agent 1's. */
+const agentSuffix = agent === 2 ? ":agent2" : "";
 const VIEWER = "http://127.0.0.1:8790";
 
 /** Stops the running workflow of this pull request, if there is one, and waits for it. */
@@ -53,11 +62,11 @@ async function startSeeded(caseId: string) {
   const client = new Client({ connection, namespace: TEMPORAL_NAMESPACE });
   const handle = await client.workflow.start(labCase, {
     taskQueue: LAB_TASK_QUEUE,
-    workflowId: `lab:case:${caseId}`,
+    workflowId: `lab:case:${caseId}${agentSuffix}`,
     workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE,
-    args: [caseId, args.includes("--publish") ? repo : null],
+    args: [caseId, args.includes("--publish") ? repo : null, agent],
   });
-  console.log(`Started ${caseId}`);
+  console.log(`Started ${caseId} (agent ${agent})`);
   console.log(`  run    ${handle.firstExecutionRunId}`);
   console.log(`  watch  ${VIEWER}/runs/${handle.firstExecutionRunId}`);
   if (args.includes("--wait")) {
@@ -86,7 +95,7 @@ async function main() {
   }
   const connection = await Connection.connect({ address: TEMPORAL_ADDRESS });
   const client = new Client({ connection, namespace: TEMPORAL_NAMESPACE });
-  const workflowId = pr ? `lab:${repo}#${pr}` : `lab:${repo}@${ref}`;
+  const workflowId = `${pr ? `lab:${repo}#${pr}` : `lab:${repo}@${ref}`}${agentSuffix}`;
 
   if (controls.includes(command ?? "")) {
     const why = flag("why") ?? `${command} by hand`;
@@ -140,6 +149,7 @@ async function main() {
         pr: pr || null,
         profile: args.includes("--full") ? "full" : "fast",
         fix: args.includes("--fix"),
+        agent,
         ...(flag("slack")
           ? {
               report: {
@@ -152,7 +162,7 @@ async function main() {
       },
     ],
   });
-  console.log(`Started ${workflowId}`);
+  console.log(`Started ${workflowId} (agent ${agent})`);
   console.log(`  run    ${handle.firstExecutionRunId}`);
   console.log(`  watch  ${VIEWER}/runs/${handle.firstExecutionRunId}`);
 

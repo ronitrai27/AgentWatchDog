@@ -54,6 +54,25 @@ function Chip({ connection: c }: { connection: Connection }) {
           <span className="inline-flex h-7 items-center rounded-full bg-ink/8 px-2.5 text-xs">
             Test mode
           </span>
+        ) : c.status === "error" ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className="inline-flex h-7 cursor-help items-center rounded-full bg-destructive/10 px-2.5 text-xs text-destructive" />
+              }
+            >
+              Error
+            </TooltipTrigger>
+            <TooltipContent>{c.detail}</TooltipContent>
+          </Tooltip>
+        ) : c.canBeConnectedNow && c.connectAt ? (
+          <a
+            href={c.connectAt}
+            aria-label={`Connect ${c.name}`}
+            className="focusable inline-flex h-7 items-center rounded-full border border-ink/25 bg-white px-3 text-xs hover:bg-paper"
+          >
+            Connect
+          </a>
         ) : (
           <Tooltip>
             <TooltipTrigger
@@ -86,7 +105,7 @@ const FIRST = ["github", "slack", "sentry", "vercel"];
 
 /**
  * Every app as a badge (logo, name, Connect) in one line that scrolls sideways. Which apps are connected comes from Rox's own connections_list tool.
- * Connecting is a demo for now (only GitHub is real), and the button says so when hovered.
+ * GitHub and Slack connect for real; the others are a demo for now, and the button says so when hovered.
  */
 export function ConnectorsCard({ connections }: { connections: Connection[] }) {
   const first = FIRST.map((id) => connections.find((c) => c.id === id)).filter(

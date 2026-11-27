@@ -182,7 +182,7 @@ export function AssistantTurn({
               );
             case "stopped":
               return (
-                <p key={key} className="text-[13px] text-muted-foreground">
+                <p key={key} className="text-[13px] text-ink-soft">
                   Stopped.
                 </p>
               );

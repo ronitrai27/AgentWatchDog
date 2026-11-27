@@ -202,7 +202,7 @@ test("sandbox_check says why Docker is not usable", async () => {
 
 // --- connections_list
 
-test("connections_list: GitHub connected, the rest not buildable yet", async () => {
+test("connections_list: GitHub connected, Slack connectable, the rest not built", async () => {
   const out = await call("connections_list", {});
   assert.equal(out.ok, true);
   if (out.ok) {
@@ -216,23 +216,65 @@ test("connections_list: GitHub connected, the rest not buildable yet", async () 
       }
     ).connections;
     assert.equal(list.find((c) => c.id === "github")?.status, "connected");
+    const slack = list.find((c) => c.id === "slack");
+    assert.equal(slack?.status, "not_connected");
+    assert.equal(slack?.canBeConnectedNow, true);
     assert.ok(
       list
-        .filter((c) => c.id !== "github")
+        .filter((c) => c.id !== "github" && c.id !== "slack")
         .every((c) => c.status === "not_connected" && !c.canBeConnectedNow),
     );
-    assert.match(out.summary, /1 of 7 connected/);
+    assert.match(out.summary, /1 of 8 connected/);
   }
 });
 
-test("connections_list: demo users are in test mode", async () => {
+test("connections_list: a saved Slack connection without a bot token is an error, said plainly", async () => {
+  const store = fakeStore();
+  (store as unknown as Record<string, unknown>).getReportConnections =
+    async () => ({
+      connections: [
+        {
+          provider: "slack",
+          workspace: "Acme",
+          channelId: "C1",
+          channelName: "alerts",
+          connectedAt: new Date(),
+        },
+      ],
+      reportTo: "slack",
+    });
+  const saved = process.env.SLACK_BOT_TOKEN;
+  delete process.env.SLACK_BOT_TOKEN;
+  try {
+    const out = await call("connections_list", {}, fakeContext({ store }));
+    assert.equal(out.ok, true);
+    if (out.ok) {
+      const slack = (
+        out.output as {
+          connections: { id: string; status: string; detail: string }[];
+        }
+      ).connections.find((c) => c.id === "slack");
+      assert.equal(slack?.status, "error");
+      assert.match(slack?.detail ?? "", /SLACK_BOT_TOKEN/);
+    }
+  } finally {
+    if (saved !== undefined) process.env.SLACK_BOT_TOKEN = saved;
+  }
+});
+
+test("connections_list: demo users see the not-built apps in test mode", async () => {
   const ctx = fakeContext({ store: fakeStore({ user: { isDemo: true } }) });
   const out = await call("connections_list", {}, ctx);
   assert.equal(out.ok, true);
   if (out.ok) {
-    const list = (out.output as { connections: { status: string }[] })
-      .connections;
-    assert.ok(list.every((c) => c.status === "test_mode"));
+    const list = (
+      out.output as { connections: { id: string; status: string }[] }
+    ).connections;
+    assert.ok(
+      list
+        .filter((c) => !["slack", "telegram"].includes(c.id))
+        .every((c) => c.status === "test_mode"),
+    );
   }
 });
 

@@ -40,6 +40,7 @@ export function fakeStore(
   return {
     getSetup: async () => setup,
     getUser: async () => user,
+    getReportConnections: async () => ({ connections: [], reportTo: null }),
     listKeyProviders: async () => options.keys ?? ["openai", "google"],
   } as unknown as Store;
 }

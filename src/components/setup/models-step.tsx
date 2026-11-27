@@ -20,16 +20,24 @@ import { StepError } from "./step-error";
 type Keys = SetupState["keys"];
 function modelOptions(keys: Keys): Option[] {
   return MODELS.map((model) => {
-    // Once a key is saved we know which models it can use.
+    // Once a key is saved we know which models it can use, unless the model was added to
+    // Rox after the key was checked: then its list never had the chance to include it.
     const key = keys[model.provider];
-    const blocked = key !== undefined && !key.models.includes(model.id);
+    const added = "addedAt" in model ? model.addedAt : undefined;
+    const checkedBefore = key && added ? key.savedAt < added : false;
+    const blocked =
+      key !== undefined && !checkedBefore && !key.models.includes(model.id);
     return {
       value: model.id,
       label: model.label,
       group: PROVIDERS[model.provider].name,
       icon: <Brand id={model.provider} size={18} />,
       disabled: blocked,
-      hint: blocked ? "Not on your key" : undefined,
+      hint: blocked
+        ? "Not on your key"
+        : "tag" in model
+          ? model.tag
+          : undefined,
     };
   });
 }
@@ -140,16 +148,22 @@ export function ModelsStep({
 
   return (
     <>
-      <Row label="Orchestrator" help="Plans the run and decides each next step">
+      <Row
+        label="Brain agent"
+        help="Talks with you, plans the run and reports back"
+      >
         <Select
-          label="Orchestrator model"
+          label="Brain agent model"
           value={orchestrator}
           onChange={(value) => setOrchestrator(findModel(value)?.id ?? null)}
           placeholder="Select a model"
           options={options}
         />
       </Row>
-      <Row label="Sub agents" help="Investigate, reproduce, fix and verify">
+      <Row
+        label="Sub agents"
+        help="Investigator, engineer and reviewer: they do the work, not the talking"
+      >
         <Select
           label="Sub agent model"
           value={subagent}

@@ -338,10 +338,12 @@ export function formatDuration(ms: number | null | undefined): string {
 export type Connection = {
   id: string;
   name: string;
-  status: "connected" | "test_mode" | "not_connected";
+  status: "connected" | "test_mode" | "not_connected" | "error";
   detail: string;
   gives?: string;
   canBeConnectedNow: boolean;
+  /** Where the user connects it, when that is built. */
+  connectAt?: string;
 };
 
 export function connectionsFrom(turn: ChatTurn): Connection[] | null {
