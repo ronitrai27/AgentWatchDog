@@ -357,7 +357,7 @@ export function RunsTable({ initial }: { initial: RunView[] }) {
         <div className="flex flex-1 flex-col overflow-x-auto">
           <table className="w-full min-w-[960px] border-collapse text-left">
             <thead>
-              <tr className="border-y border-ink/15 bg-paper/60 text-[12.5px] font-semibold text-ink/85">
+              <tr className="border-y border-ink/40 bg-paper/60 text-[12px] font-semibold text-ink">
                 <th className="px-4 py-2.5 font-semibold">Run</th>
                 <th className="px-4 py-2.5 font-semibold">Trigger</th>
                 <th className="px-4 py-2.5 font-semibold">
@@ -393,7 +393,7 @@ export function RunsTable({ initial }: { initial: RunView[] }) {
                     return (
                       <tr
                         key={r.id}
-                        className="group border-b border-ink/8 transition-colors hover:bg-paper/50"
+                        className="group border-b border-ink/20 transition-colors hover:bg-paper/50"
                       >
                         <td className="max-w-[240px] px-4 py-3">
                           <p
@@ -402,7 +402,7 @@ export function RunsTable({ initial }: { initial: RunView[] }) {
                           >
                             {r.title ?? r.repo ?? "Pipeline run"}
                           </p>
-                          <p className="mt-0.5 truncate text-[11.5px] text-ink/55">
+                          <p className="mt-0.5 truncate text-[11.5px] text-ink">
                             <span className="font-mono">
                               {r.id.slice(0, 8)}
                             </span>
@@ -421,7 +421,7 @@ export function RunsTable({ initial }: { initial: RunView[] }) {
                                   : r.source}
                             </p>
                           </div>
-                          <p className="mt-0.5 truncate text-[11.5px] text-ink/55">
+                          <p className="mt-0.5 truncate text-[11.5px] text-ink">
                             {r.repo}
                             {r.pr ? ` · PR #${r.pr}` : ""}
                           </p>
@@ -430,18 +430,18 @@ export function RunsTable({ initial }: { initial: RunView[] }) {
                           <p className="text-[13px] tabular-nums text-ink">
                             {duration(msOf(r))}
                           </p>
-                          <p className="mt-0.5 text-[11.5px] text-ink/55">
+                          <p className="mt-0.5 text-[11.5px] text-ink">
                             {r.lastSeq} steps ·{" "}
                             {tokens(r.tokensIn + r.tokensOut)} tokens
                           </p>
                         </td>
                         <td className="px-4 py-3">
                           <span
-                            className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11.5px] font-semibold ${st.cls}`}
+                            className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11.5px] font-medium ${st.cls}`}
                           >
-                            <span
-                              className={`size-1.5 rounded-full bg-current ${live ? "animate-pulse" : ""}`}
-                            />
+                            {/* <span
+                              className={`size-1.5 rounded-full bg-current ${live ? "" : ""}`}
+                            /> */}
                             {st.label}
                           </span>
                         </td>
@@ -493,7 +493,7 @@ export function RunsTable({ initial }: { initial: RunView[] }) {
                           <button
                             type="button"
                             onClick={() => openRun(r.id)}
-                            className="focusable inline-flex h-8 items-center gap-1 rounded-lg border border-green-800/40 bg-white px-3 text-[12.5px] font-semibold text-green-900 hover:bg-green-50"
+                            className="focusable inline-flex h-8 items-center gap-1 rounded border border-green-800/40 bg-white px-3 text-[12px]  text-black hover:bg-green-50"
                           >
                             {live ? "Watch" : "View"}
                             <ChevronRightIcon className="size-3.5" />

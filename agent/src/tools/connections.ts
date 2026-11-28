@@ -3,6 +3,7 @@
 // guessed; a failed check says exactly what failed.
 import { z } from "zod";
 import { DEMO_REPO } from "../../../src/lib/models";
+import { TRIGGER_PROVIDERS } from "../../../src/lib/triggers";
 import { slackFromEnv } from "../integrations/slack";
 import { defineTool } from "./define";
 import { requireSetup } from "./shared";
@@ -30,12 +31,14 @@ export const connectionsList = defineTool({
   name: "connections_list",
   group: "connections",
   description:
-    "Reads the user's connections from the database right now (GitHub, Slack, Sentry; Telegram only when saved): connected, not connected, or an error with the exact reason. Slack is also checked live against Slack. " +
-    "Call it every time the user asks what Rox is connected to, what Rox can see or do, or before recommending a connection. The user can connect or disconnect at any moment, so never answer from an earlier call.",
+    "Reads, right now, everything about the apps around Rox in one call: each connection (GitHub, Slack, Sentry; Telegram only when saved) as connected, not connected, or an error with the exact reason (Slack is also checked live), " +
+    "AND the triggers the user turned on in Settings > Workflow for every app (what wakes Rox: a PR against main, a failed CI check, a new Sentry issue, ...), with whether each can actually fire. " +
+    "Call it every time the user asks what Rox is connected to, what wakes Rox, which triggers are on, or what Rox can see or do. The user can change these at any moment, so never answer from an earlier call. " +
+    "It only reads. To change a connection the user goes to Connections (/home/connections); to change triggers, Settings > Workflow (/home/settings). Say so when they want to change something.",
   input: z.object({}),
   risk: "read",
-  timeoutMs: 5_000,
-  title: () => "List the connections",
+  timeoutMs: 10_000,
+  title: () => "Read the connections and triggers",
   async run(_input, ctx) {
     const setup = await requireSetup(ctx);
     const user = await ctx.store.getUser(ctx.userId);
@@ -161,15 +164,49 @@ export const connectionsList = defineTool({
         ]
       : [];
 
+    const connections = [github, slack, sentry, ...telegram];
+
+    // What wakes Rox. A trigger only fires when its app is connected and its webhook is built.
+    const on = new Set(setup.triggers ?? []);
+    const live: Record<string, boolean> = {
+      github: github.status === "connected",
+      sentry: sentry.status === "connected",
+    };
+    const triggers = TRIGGER_PROVIDERS.map((provider) => {
+      const turnedOn = provider.triggers.filter((t) => on.has(t.id));
+      const canFire = live[provider.id] ?? false;
+      return {
+        app: provider.name,
+        on: turnedOn.map((t) => ({ id: t.id, label: t.label, does: t.detail })),
+        off: provider.triggers.filter((t) => !on.has(t.id)).map((t) => t.label),
+        canFire,
+        ...(turnedOn.length > 0 && !canFire
+          ? {
+              note:
+                provider.id in live
+                  ? `${provider.name} is not connected, so these triggers cannot wake Rox yet.`
+                  : `Rox cannot receive ${provider.name} events yet (not built), so these triggers do nothing for now.`,
+            }
+          : {}),
+      };
+    });
+
     return {
-      connections: [github, slack, sentry, ...telegram],
+      connections,
       reportTo,
+      triggers,
+      triggersOn: triggers.reduce((n, t) => n + t.on.length, 0),
+      editAt: {
+        connections: "/home/connections",
+        triggers: "/home/settings (Settings > Workflow)",
+      },
     };
   },
   summarize(output) {
     const list = (output as { connections: { status: Status }[] }).connections;
     const connected = list.filter((c) => c.status === "connected").length;
     const errors = list.filter((c) => c.status === "error").length;
-    return `${connected} of ${list.length} connected${errors ? `, ${errors} with an error` : ""}`;
+    const on = (output as { triggersOn?: number }).triggersOn ?? 0;
+    return `${connected} of ${list.length} connected${errors ? `, ${errors} with an error` : ""} · ${on} ${on === 1 ? "trigger" : "triggers"} on`;
   },
 });

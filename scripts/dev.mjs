@@ -62,3 +62,19 @@ if (sentryRelay) {
     "[dev] SENTRY_SMEE_URL is not set, so Sentry events will not arrive.",
   );
 }
+
+const betterstackRelay = process.env.BETTERSTACK_SMEE_URL;
+if (betterstackRelay) {
+  const target = `${process.env.APP_URL ?? "http://localhost:3000"}/api/webhooks/betterstack`;
+  console.log(`[dev] Better Stack events: ${betterstackRelay} -> ${target}`);
+  start("betterstack relay", "node_modules/smee-client/bin/smee.js", [
+    "--url",
+    betterstackRelay,
+    "--target",
+    target,
+  ]);
+} else {
+  console.log(
+    "[dev] BETTERSTACK_SMEE_URL is not set, so Better Stack events will not arrive.",
+  );
+}

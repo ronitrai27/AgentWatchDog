@@ -1,6 +1,13 @@
 "use client";
 
-import { CheckIcon, CircleDashedIcon, LoaderCircleIcon } from "lucide-react";
+import {
+  CircleCheckIcon,
+  CircleDotIcon,
+  CircleIcon,
+  ListChecksIcon,
+  ListTodoIcon,
+  type LucideIcon,
+} from "lucide-react";
 import {
   Trace,
   TraceCollapsible,
@@ -14,10 +21,12 @@ import type { PlanItem } from "@/lib/chat-model";
 
 function Section({
   title,
+  icon: Icon,
   items,
   defaultOpen,
 }: {
   title: string;
+  icon: LucideIcon;
   items: PlanItem[];
   defaultOpen: boolean;
 }) {
@@ -26,6 +35,9 @@ function Section({
     <TraceCollapsible defaultOpen={defaultOpen}>
       <TraceCollapsibleTrigger>
         <TraceLine>
+          <TraceIcon>
+            <Icon />
+          </TraceIcon>
           <TraceTitle>{title}</TraceTitle>
         </TraceLine>
       </TraceCollapsibleTrigger>
@@ -43,11 +55,11 @@ function Section({
           >
             <TraceIcon>
               {item.status === "done" ? (
-                <CheckIcon />
+                <CircleCheckIcon />
               ) : item.status === "doing" ? (
-                <LoaderCircleIcon className="animate-spin" />
+                <CircleDotIcon />
               ) : (
-                <CircleDashedIcon />
+                <CircleIcon />
               )}
             </TraceIcon>
             <TraceTitle>{item.text}</TraceTitle>
@@ -58,7 +70,10 @@ function Section({
   );
 }
 
-/** Rox's own to-do list as a queue: "3 to do", "2 completed". Built with Trace. */
+/**
+ * Several separate things the user asked for, as a queue: "3 to do", "1 completed".
+ * Built with Trace, one TraceCollapsible per section.
+ */
 export function PlanQueue({
   items: all,
   running,
@@ -78,11 +93,13 @@ export function PlanQueue({
     <Trace aria-label="Rox's plan">
       <Section
         title={`${open.length} ${running ? "to do" : "not finished"}`}
+        icon={ListTodoIcon}
         items={open}
         defaultOpen
       />
       <Section
         title={`${done.length} completed`}
+        icon={ListChecksIcon}
         items={done}
         defaultOpen={false}
       />

@@ -14,16 +14,17 @@ const describeModel = (id: string | null) => {
   };
 };
 
-export const setupGet = defineTool({
-  name: "setup_get",
+export const setupOverview = defineTool({
+  name: "setup_overview",
   group: "setup",
   description:
-    "Reads what the user chose in the setup guide: the repository, the main and helper models, the sandbox, and which model providers have a saved key. " +
-    "Use it first when you need to know how Rox is configured. It never returns any key or secret.",
+    "Reads how Rox is set up for this user, in one call: Quick Judge Mode or a real GitHub repository, which repository, the main model (chat and planning) and the helper model, the sandbox chosen in setup and when it was last checked, which model providers have a saved key, and whether setup is complete. " +
+    "Use it when the user asks how Rox is configured, which model or repo it uses, or whether setup is finished. It never returns a key or secret. " +
+    "It does not cover connections or triggers (connections_list) or the repo's contents (repo_info). To change setup, the user goes to Settings (/home/settings).",
   input: z.object({}),
   risk: "read",
-  timeoutMs: 5_000,
-  title: () => "Read the saved setup",
+  timeoutMs: 10_000,
+  title: () => "Read the setup",
   async run(_input, ctx) {
     const setup = await requireSetup(ctx);
     const user = await ctx.store.getUser(ctx.userId);
@@ -41,6 +42,7 @@ export const setupGet = defineTool({
       modelProvidersWithSavedKey: providers.map((p) =>
         p in PROVIDERS ? PROVIDERS[p as keyof typeof PROVIDERS].name : p,
       ),
+      changeAt: "/home/settings",
       setupComplete: Boolean(
         setup.repo && setup.orchestrator && setup.subagent && setup.sandbox,
       ),

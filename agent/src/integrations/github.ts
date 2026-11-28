@@ -47,6 +47,19 @@ export type PullCounts = {
   closed: number;
   capped: boolean;
 };
+/** One pull request of any state, for counting who opened what and what got merged. */
+export type PullDetail = {
+  number: number;
+  title: string;
+  author: string;
+  /** True for GitHub Apps and other bot accounts ("name[bot]"). */
+  authorIsBot: boolean;
+  state: "open" | "merged" | "closed";
+  createdAt: string;
+  mergedAt: string | null;
+  closedAt: string | null;
+  url: string;
+};
 export type CheckSummary = {
   state: "passing" | "failing" | "pending" | "none";
   total: number;
@@ -65,6 +78,8 @@ export interface GithubClient {
   listOpenPulls(target: Target, limit: number): Promise<PullSummary[]>;
   /** The newest 100 pull requests by state. */
   countPulls(target: Target): Promise<PullCounts>;
+  /** The newest pull requests of every state, newest first (at most 100). */
+  listPulls(target: Target, limit: number): Promise<PullDetail[]>;
   getChecks(target: Target, sha: string): Promise<CheckSummary>;
   /** Null when the folder does not exist. */
   listDir(
@@ -395,6 +410,31 @@ export function createGithubClient(options: Options): GithubClient {
         closed: rows.length - open - merged,
         capped: rows.length === 100,
       };
+    },
+
+    async listPulls(t, limit) {
+      const rows =
+        (await get<Array<Record<string, unknown>>>(
+          t,
+          `${repoRoute(t)}/pulls?state=all&sort=created&direction=desc&per_page=${Math.min(100, Math.max(1, limit))}`,
+          "pull requests",
+        )) ?? [];
+      return rows.map((p) => {
+        const user = (p.user ?? {}) as { login?: string; type?: string };
+        const mergedAt = (p.merged_at as string | null) ?? null;
+        return {
+          number: Number(p.number),
+          title: String(p.title).slice(0, 120),
+          author: user.login ?? "unknown",
+          authorIsBot:
+            user.type === "Bot" || (user.login ?? "").endsWith("[bot]"),
+          state: mergedAt ? "merged" : p.state === "open" ? "open" : "closed",
+          createdAt: String(p.created_at),
+          mergedAt,
+          closedAt: (p.closed_at as string | null) ?? null,
+          url: String(p.html_url),
+        };
+      });
     },
 
     async getChecks(t, sha) {

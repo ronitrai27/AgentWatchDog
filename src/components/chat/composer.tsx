@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { PipelineKillSwitch } from "@/components/runs/run-sheet";
+// import { PipelineKillSwitch } from "@/components/runs/run-sheet";
 import { Brand } from "@/components/setup/brand";
 import {
   InputGroup,
@@ -244,7 +244,7 @@ export function Composer({
               </TooltipContent>
             </Tooltip>
 
-            <PipelineKillSwitch />
+            {/* <PipelineKillSwitch /> */}
 
             {running ? (
               <Tooltip>

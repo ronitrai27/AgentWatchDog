@@ -1,6 +1,11 @@
 "use client";
 
-import { AlertTriangleIcon, XIcon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  GitMergeIcon,
+  GitPullRequestIcon,
+  XIcon,
+} from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { type ReactNode, useEffect, useState, useTransition } from "react";
 import { saveAgentConfig } from "@/app/(app)/home/actions";
@@ -17,8 +22,27 @@ import {
 } from "@/lib/agent-config";
 
 const PR_MERGE_ACTIONS = [
-  { value: "open_pr", label: "Open PR", badge: "Recommended" },
-  { value: "merge_pr", label: "Merge PR" },
+  {
+    value: "open_pr",
+    label: "Open PR",
+    badge: "Recommended",
+    icon: (
+      <GitPullRequestIcon
+        aria-hidden="true"
+        className="size-4 shrink-0 text-ink-muted"
+      />
+    ),
+  },
+  {
+    value: "merge_pr",
+    label: "Merge PR",
+    icon: (
+      <GitMergeIcon
+        aria-hidden="true"
+        className="size-4 shrink-0 text-ink-muted"
+      />
+    ),
+  },
 ] as const;
 
 type PrMergeAction = (typeof PR_MERGE_ACTIONS)[number]["value"];

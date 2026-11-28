@@ -19,6 +19,7 @@ import {
   type ChatTurn,
   connectionsFrom,
   formatDuration,
+  runsFrom,
 } from "@/lib/chat-model";
 import { ConnectorsCard } from "./connectors-card";
 import { Markdown } from "./markdown";
@@ -29,7 +30,9 @@ import {
   RatingActions,
   RetryAction,
 } from "./message-actions";
+import { Plan } from "./plan";
 import { PlanQueue } from "./plan-queue";
+import { RunRefs } from "./run-refs";
 import { Thinking } from "./thinking";
 import { ToolSteps } from "./tool-steps";
 
@@ -109,6 +112,7 @@ export function AssistantTurn({
   const [rating, setRating] = useState<Rating>(null);
   const running = turn.status === "running";
   const connections = connectionsFrom(turn);
+  const runs = runsFrom(turn);
   const answer = turn.blocks
     .filter((b) => b.kind === "text")
     .map((b) => (b.kind === "text" ? b.text : ""))
@@ -144,7 +148,14 @@ export function AssistantTurn({
                 />
               );
             case "plan":
-              return (
+              return block.view === "plan" ? (
+                <Plan
+                  key={key}
+                  title={block.title}
+                  items={block.items}
+                  running={running}
+                />
+              ) : (
                 <PlanQueue key={key} items={block.items} running={running} />
               );
             case "steps":
@@ -200,6 +211,8 @@ export function AssistantTurn({
             </TraceLine>
           </Trace>
         )}
+
+        {runs.length > 0 && <RunRefs runs={runs} />}
 
         {connections && !running && (
           <div className="flex w-full min-w-0 flex-col gap-2">

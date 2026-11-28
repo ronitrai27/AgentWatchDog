@@ -1,35 +1,73 @@
 // Tools that read the user's GitHub repository. All read-only.
 import { z } from "zod";
-import type { CheckSummary, PullSummary } from "../integrations/github";
+import type {
+  CheckSummary,
+  PullDetail,
+  PullSummary,
+} from "../integrations/github";
+import type { RunList } from "../store/sessions";
 import { defineTool } from "./define";
-import { detectProject } from "./detect";
 import { githubTarget, plural } from "./shared";
-import { ToolError } from "./types";
 
 const reason = (r: PromiseRejectedResult) =>
   r.reason instanceof Error ? r.reason.message : String(r.reason);
 
-export const repoOverview = defineTool({
-  name: "repo_overview",
+/** The Rox GitHub App's bot account, as it appears as a pull request author. */
+const ROX_BOT = `${process.env.GITHUB_APP_SLUG?.trim() || "rox-watchdog"}[bot]`;
+
+const WINDOWS = { "24h": 1, "7d": 7, "30d": 30, "90d": 90 } as const;
+
+export const repoInfo = defineTool({
+  name: "repo_info",
   group: "repo",
   description:
-    "Reads the connected GitHub repository's overview: default branch, main language, last push, recent commits, open pull requests with their check status, and the status of the default branch's checks. " +
-    "Use it to see what state the project is in. It cannot list GitHub issues (the Rox app has no Issues permission). It does not read file contents; use repo_detect_project for that.",
-  input: z.object({}),
+    "Reads everything about the connected GitHub repository in one call: name, default branch, languages, last push, the default branch's checks, open pull requests with their checks, recent commits, " +
+    "AND activity in a time window: pull requests opened, merged and closed, how many of them Rox (its GitHub App bot) opened and how many of those were merged, commits pushed, and the pull requests Rox's runs opened. " +
+    'Use it for any question about the repo, its pull requests, commits, CI state, or what Rox has contributed ("how many PRs has Rox made", "how many got merged"). ' +
+    "It cannot see GitHub issues (no Issues permission) and does not read file contents. It does not work in Quick Judge Mode (demo app).",
+  input: z.object({
+    window: z
+      .enum(["24h", "7d", "30d", "90d"])
+      .optional()
+      .describe("The activity window. Default 30d."),
+  }),
   risk: "read",
-  timeoutMs: 25_000,
-  title: () => "Read the repository overview",
-  async run(_input, ctx) {
+  timeoutMs: 30_000,
+  title: () => "Read the repository and its activity",
+  async run(input, ctx) {
     const { client, target } = await githubTarget(ctx);
     const warnings: string[] = [];
+    const window = input.window ?? "30d";
+    const since = new Date(Date.now() - WINDOWS[window] * 86_400_000);
 
     const repo = await client.getRepo(target); // if this fails, the whole tool fails with the reason
-    const [languages, commits, pulls, mainChecks] = await Promise.allSettled([
+    const [
+      languages,
+      commits,
+      pulls,
+      mainChecks,
+      allPulls,
+      windowCommits,
+      roxRuns,
+    ] = await Promise.allSettled([
       client.getLanguages(target),
       client.listCommits(target, 5),
       client.listOpenPulls(target, 8),
       client.getChecks(target, repo.defaultBranch),
+      client.listPulls(target, 100),
+      client.listCommits(target, 100, since),
+      ctx.store.listRuns(ctx.userId, {
+        repo: target.repo,
+        since,
+        limit: 50,
+      }),
     ]);
+    if (allPulls.status === "rejected")
+      warnings.push(`Pull request history: ${reason(allPulls)}`);
+    if (windowCommits.status === "rejected")
+      warnings.push(`Commits in the window: ${reason(windowCommits)}`);
+    if (roxRuns.status === "rejected")
+      warnings.push(`Rox runs: ${reason(roxRuns)}`);
     if (languages.status === "rejected")
       warnings.push(`Languages: ${reason(languages)}`);
     if (commits.status === "rejected")
@@ -85,6 +123,7 @@ export const repoOverview = defineTool({
             : null,
       })),
       recentCommits: commits.status === "fulfilled" ? commits.value : [],
+      activity: activity(window, since, allPulls, windowCommits, roxRuns),
       warnings,
       limits: [
         "GitHub issues are not visible: the Rox GitHub App has no Issues permission.",
@@ -93,6 +132,7 @@ export const repoOverview = defineTool({
   },
   summarize(output) {
     const o = output as {
+      activity?: { roxPullRequests?: { opened: number; merged: number } };
       repository: string;
       openPullRequests: unknown[];
       defaultBranchChecks: CheckSummary | null;
@@ -104,82 +144,76 @@ export const repoOverview = defineTool({
     const warn = o.warnings.length
       ? ` · ${plural(o.warnings.length, "warning")}`
       : "";
-    return `${o.repository} · ${plural(o.openPullRequests.length, "open PR")}${checks}${warn}`;
+    const rox = o.activity?.roxPullRequests;
+    const roxLine = rox ? ` · Rox ${rox.opened} PRs, ${rox.merged} merged` : "";
+    return `${o.repository} · ${plural(o.openPullRequests.length, "open PR")}${checks}${roxLine}${warn}`;
   },
 });
 
-const PACKAGE_JSON_LIMIT = 40_000;
+type Settled<T> = PromiseSettledResult<T>;
 
-export const repoDetectProject = defineTool({
-  name: "repo_detect_project",
-  group: "repo",
-  description:
-    "Works out what kind of project the connected repository is: language, package manager, framework, and the install, build, test and start commands, plus Docker and CI files. " +
-    "It reads the file list and package.json from the default branch. Use it to find out whether Rox can build and test the project. It does not run anything.",
-  input: z.object({}),
-  risk: "read",
-  timeoutMs: 25_000,
-  title: () => "Detect the project type",
-  async run(_input, ctx) {
-    const { client, target } = await githubTarget(ctx);
-    const repo = await client.getRepo(target);
-    const ref = repo.defaultBranch;
-
-    const root = await client.listDir(target, "", ref);
-    if (!root)
-      throw new ToolError(
-        "not_found",
-        `The repository ${target.repo} looks empty: GitHub returned no files`,
-      );
-    const rootNames = root.map((e) => e.name);
-
-    const [packageJson, workflowDir] = await Promise.allSettled([
-      rootNames.includes("package.json")
-        ? client.getFile(target, "package.json", PACKAGE_JSON_LIMIT, ref)
-        : Promise.resolve(null),
-      rootNames.includes(".github")
-        ? client.listDir(target, ".github/workflows", ref)
-        : Promise.resolve(null),
-    ]);
-    const warnings: string[] = [];
-    if (packageJson.status === "rejected")
-      warnings.push(`package.json: ${reason(packageJson)}`);
-    if (workflowDir.status === "rejected")
-      warnings.push(`workflows: ${reason(workflowDir)}`);
-
-    const detection = detectProject({
-      rootNames,
-      packageJson:
-        packageJson.status === "fulfilled" ? packageJson.value : null,
-      workflows:
-        workflowDir.status === "fulfilled" && workflowDir.value
-          ? workflowDir.value
-              .filter((f) => /\.ya?ml$/.test(f.name))
-              .map((f) => f.name)
-          : [],
-    });
-    return {
-      repository: repo.fullName,
-      branch: ref,
-      ...detection,
-      topLevelFiles: rootNames.slice(0, 40),
-      warnings,
-    };
-  },
-  summarize(output) {
-    const o = output as {
-      languages: string[];
-      framework: string | null;
-      packageManager: string | null;
-      hasTests: boolean;
-    };
-    return [
-      o.languages.join("/") || "unknown language",
-      o.framework,
-      o.packageManager,
-      o.hasTests ? "has tests" : "no tests found",
-    ]
-      .filter(Boolean)
-      .join(" · ");
-  },
-});
+/** Counts in code, so the model never has to add up a list. */
+function activity(
+  window: string,
+  since: Date,
+  pulls: Settled<PullDetail[]>,
+  commits: Settled<{ sha: string }[]>,
+  runs: Settled<RunList>,
+) {
+  const inWindow = (at: string | null) =>
+    Boolean(at) && Date.parse(at as string) >= since.getTime();
+  const all = pulls.status === "fulfilled" ? pulls.value : null;
+  const rox = all?.filter((p) => p.author === ROX_BOT) ?? null;
+  const count = (list: PullDetail[]) => ({
+    opened: list.filter((p) => inWindow(p.createdAt)).length,
+    merged: list.filter((p) => inWindow(p.mergedAt)).length,
+    closedUnmerged: list.filter(
+      (p) => p.state === "closed" && inWindow(p.closedAt),
+    ).length,
+    openNow: list.filter((p) => p.state === "open").length,
+  });
+  const runList = runs.status === "fulfilled" ? runs.value : null;
+  return {
+    window,
+    since: since.toISOString(),
+    pullRequests: all ? count(all) : null,
+    roxBot: ROX_BOT,
+    roxPullRequests: rox
+      ? {
+          ...count(rox),
+          list: rox.slice(0, 10).map((p) => ({
+            number: p.number,
+            title: p.title,
+            state: p.state,
+            createdAt: p.createdAt,
+            url: p.url,
+          })),
+        }
+      : null,
+    otherBots: all
+      ? [
+          ...new Set(
+            all
+              .filter((p) => p.authorIsBot && p.author !== ROX_BOT)
+              .map((p) => p.author),
+          ),
+        ]
+      : [],
+    commitsPushed:
+      commits.status === "fulfilled"
+        ? { count: commits.value.length, capped: commits.value.length === 100 }
+        : null,
+    roxRuns: runList
+      ? {
+          total: runList.windowTotal,
+          byResult: runList.windowByResult,
+          openedPullRequests: runList.windowByResult.pr_opened ?? 0,
+        }
+      : null,
+    ...(all && all.length === 100
+      ? {
+          note: "Only the newest 100 pull requests were read; older ones are not counted.",
+        }
+      : {}),
+  };
+}

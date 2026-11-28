@@ -98,9 +98,13 @@ test("tool results arrive live, one by one, and the chat is named after the mess
       toolCalls: [
         {
           name: "plan_update",
-          args: { items: [{ text: "Look", status: "doing" }] },
+          args: {
+            kind: "plan",
+            title: "Check the setup",
+            items: [{ text: "Look", status: "doing" }],
+          },
         },
-        { name: "setup_get" },
+        { name: "setup_overview" },
       ],
     },
     { text: "All set." },

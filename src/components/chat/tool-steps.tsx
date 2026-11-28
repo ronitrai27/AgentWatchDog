@@ -112,11 +112,16 @@ export function ToolSteps({ steps }: { steps: Step[] }) {
     if (wasRunning.current && !running) setOpen(false);
     wasRunning.current = running;
   }, [running]);
-  const title = running
-    ? `Working… ${steps.filter((s) => s.status !== "running").length} of ${steps.length} steps done`
+  // A Task: while it runs, the title is the step Rox is on; once done, what it did.
+  const current = steps.find((s) => s.status === "running");
+  const title = current
+    ? `${current.title}…`
     : `Researched in ${steps.length} ${steps.length === 1 ? "step" : "steps"}${
         failed > 0 ? `, ${failed} failed` : ""
       }`;
+  const progress = running
+    ? `${steps.filter((s) => s.status !== "running").length} of ${steps.length}`
+    : null;
 
   return (
     <Trace>
@@ -126,6 +131,7 @@ export function ToolSteps({ steps }: { steps: Step[] }) {
             status={running ? "running" : failed > 0 ? "error" : undefined}
           >
             <TraceTitle>{title}</TraceTitle>
+            {progress && <TraceDescription>{progress}</TraceDescription>}
           </TraceLine>
         </TraceCollapsibleTrigger>
         <TraceCollapsibleContent className="flex flex-col gap-2">

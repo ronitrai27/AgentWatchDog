@@ -38,7 +38,13 @@ export type Block =
   | { kind: "thinking"; text: string; durationMs: number | null; live: boolean }
   | { kind: "text"; text: string; live: boolean; at: string }
   | { kind: "steps"; steps: Step[] }
-  | { kind: "plan"; items: PlanItem[] }
+  | {
+      kind: "plan";
+      /** plan: one goal, steps known up front. queue: separate things the user asked. */
+      view: "plan" | "queue";
+      title: string;
+      items: PlanItem[];
+    }
   | { kind: "error"; message: string; hint?: string; errorKind: string }
   | { kind: "stopped" };
 
@@ -239,6 +245,8 @@ export function buildTurns(state: ChatState): ChatTurn[] {
           at: event.occurredAt,
         };
         stepByCall.set(step.callId, step);
+        // The plan tool shows itself as the plan, not as a step.
+        if (step.name === "plan_update") break;
         const last = turn.blocks[turn.blocks.length - 1];
         if (last?.kind === "steps") last.steps.push(step);
         else turn.blocks.push({ kind: "steps", steps: [step] });
@@ -257,9 +265,12 @@ export function buildTurns(state: ChatState): ChatTurn[] {
       }
       case "plan.updated": {
         const items = (Array.isArray(d.items) ? d.items : []) as PlanItem[];
+        const view = d.kind === "plan" ? "plan" : "queue";
+        const title = str(d.title);
         const existing = turn.blocks.find((b) => b.kind === "plan");
-        if (existing && existing.kind === "plan") existing.items = items;
-        else turn.blocks.push({ kind: "plan", items });
+        if (existing && existing.kind === "plan")
+          Object.assign(existing, { items, view, title });
+        else turn.blocks.push({ kind: "plan", view, title, items });
         break;
       }
       case "agent.error":
@@ -362,4 +373,47 @@ export function connectionsFrom(turn: ChatTurn): Connection[] | null {
     }
   }
   return null;
+}
+
+/** A pipeline run that a tool returned in this turn, for its View button. */
+export type RunRef = {
+  runId: string;
+  title: string | null;
+  status: string;
+  /** What it came to, from the tool: pr_opened, gave_up, failed, running, ... */
+  result: string;
+  live: boolean;
+  pr: number | null;
+};
+
+/** The runs runs_query and runs_get returned in this turn, newest mention first, at most 5. */
+export function runsFrom(turn: ChatTurn): RunRef[] {
+  const seen = new Map<string, RunRef>();
+  for (const block of turn.blocks) {
+    if (block.kind !== "steps") continue;
+    for (const step of block.steps) {
+      if (step.status !== "done") continue;
+      if (step.name !== "runs_query" && step.name !== "runs_get") continue;
+      try {
+        const parsed = JSON.parse(step.output ?? "") as {
+          runs?: RunRef[];
+          run?: RunRef;
+        };
+        const list = parsed.runs ?? (parsed.run ? [parsed.run] : []);
+        for (const r of list)
+          if (r?.runId)
+            seen.set(r.runId, {
+              runId: r.runId,
+              title: r.title ?? null,
+              status: r.status,
+              result: r.result ?? r.status,
+              live: Boolean(r.live),
+              pr: r.pr ?? null,
+            });
+      } catch {
+        // a cut-off result has no usable runs
+      }
+    }
+  }
+  return [...seen.values()].slice(0, 5);
 }

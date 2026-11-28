@@ -8,7 +8,15 @@ import type {
   PullSummary,
   RepoInfo,
 } from "../integrations/github";
-import type { SetupRow, Store, UserRow } from "../store/sessions";
+import type {
+  RunEventRow,
+  RunFilter,
+  RunResult,
+  RunRow,
+  SetupRow,
+  Store,
+  UserRow,
+} from "../store/sessions";
 import type { ToolContext, ToolError } from "./types";
 
 export const USER_ID = "00000000-0000-4000-8000-000000000001";
@@ -20,15 +28,109 @@ export const githubSetup: SetupRow = {
   subagent: "gemini-3.8-flash",
   sandbox: "docker",
   sandboxCheckedAt: new Date("2026-11-24T10:00:00Z"),
+  triggers: ["github:pr_main", "sentry:new_issue"],
 };
+
+export const fakeRuns: RunRow[] = [
+  {
+    runId: "run-live",
+    source: "github",
+    trigger: "github:pr_main",
+    invokedBy: "webhook",
+    repo: "acme/shop",
+    pr: 12,
+    headSha: "sha12",
+    title: "Add coupons",
+    status: "running",
+    outcome: null,
+    prUrl: null,
+    reason: null,
+    startedAt: new Date(Date.now() - 60_000),
+    finishedAt: null,
+    durationMs: null,
+    costUsd: 0.0123,
+    modelCalls: 3,
+    lastSeq: 4,
+    prMergedAt: null,
+  },
+  {
+    runId: "run-fixed",
+    source: "sentry",
+    trigger: "sentry:new_issue",
+    invokedBy: "webhook",
+    repo: "acme/shop",
+    pr: null,
+    headSha: null,
+    title: "TypeError in cart total",
+    status: "succeeded",
+    outcome: "fixed",
+    prUrl: "https://github.com/acme/shop/pull/14",
+    reason: null,
+    startedAt: new Date(Date.now() - 3_600_000),
+    finishedAt: new Date(Date.now() - 3_000_000),
+    durationMs: 600_000,
+    costUsd: 0.2,
+    modelCalls: 12,
+    lastSeq: 30,
+    prMergedAt: new Date(Date.now() - 2_000_000),
+  },
+  {
+    // Status succeeded, but it gave up: counts as failed, like on the Runs page.
+    runId: "run-gave-up",
+    source: "sentry",
+    trigger: "sentry:new_issue",
+    invokedBy: "webhook",
+    repo: "acme/shop",
+    pr: null,
+    headSha: null,
+    title: "Cannot destructure perUsd",
+    status: "succeeded",
+    outcome: "gave_up",
+    prUrl: null,
+    reason: "No safe fix found",
+    startedAt: new Date(Date.now() - 7_200_000),
+    finishedAt: new Date(Date.now() - 6_800_000),
+    durationMs: 400_000,
+    costUsd: 0,
+    modelCalls: 0,
+    lastSeq: 47,
+    prMergedAt: null,
+  },
+];
+
+/** The store's RESULT_SQL rule, for the fake. */
+function fakeResult(r: RunRow): RunResult {
+  if (
+    ["running", "paused", "failed", "cancelled", "aborted"].includes(r.status)
+  )
+    return r.status as RunResult;
+  if (r.outcome === "fixed") return r.prUrl ? "pr_opened" : "fixed_no_pr";
+  if (r.outcome === "gave_up") return "gave_up";
+  if (r.outcome === "nothing_to_fix") return "nothing_to_fix";
+  if (r.outcome === "infra") return "stopped_infra";
+  return "finished";
+}
+
+const fakeEvents: RunEventRow[] = [1, 2, 3, 4].map((seq) => ({
+  seq,
+  at: new Date(Date.now() - (5 - seq) * 10_000),
+  step: ["checkout", "install", "test", "fix"][seq - 1] as string,
+  kind: "step",
+  title: `Step ${seq}`,
+  status: seq < 4 ? "ok" : "running",
+  ms: seq < 4 ? 1000 : null,
+  attempt: 1,
+}));
 
 export function fakeStore(
   options: {
     setup?: SetupRow | null;
     user?: Partial<UserRow>;
     keys?: string[];
+    runs?: RunRow[];
   } = {},
 ): Store {
+  const runs = options.runs ?? fakeRuns;
   const setup = options.setup === undefined ? githubSetup : options.setup;
   const user: UserRow = {
     id: USER_ID,
@@ -42,6 +144,38 @@ export function fakeStore(
     getUser: async () => user,
     getReportConnections: async () => ({ connections: [], reportTo: null }),
     listKeyProviders: async () => options.keys ?? ["openai", "google"],
+    listRuns: async (_userId: string, f: RunFilter) => {
+      const inWindow = runs.filter(
+        (r) =>
+          (!f.source || r.source === f.source) &&
+          (!f.trigger || r.trigger === f.trigger) &&
+          (!f.repo || r.repo === f.repo) &&
+          (f.pr === undefined || r.pr === f.pr) &&
+          (!f.since || r.startedAt >= f.since),
+      );
+      const windowByResult: Partial<Record<RunResult, number>> = {};
+      for (const r of inWindow)
+        windowByResult[fakeResult(r)] =
+          (windowByResult[fakeResult(r)] ?? 0) + 1;
+      const match = inWindow.filter(
+        (r) => !f.results || f.results.includes(fakeResult(r)),
+      );
+      return {
+        windowTotal: inWindow.length,
+        windowByResult,
+        windowMerged: inWindow.filter((r) => r.prMergedAt).length,
+        matching: match.length,
+        runs: match.slice(0, f.limit),
+      };
+    },
+    getRun: async (_userId: string, id: string) =>
+      runs.find((r) => r.runId === id) ?? null,
+    listRunEvents: async (
+      _userId: string,
+      _runId: string,
+      afterSeq: number,
+      limit: number,
+    ) => fakeEvents.filter((e) => e.seq > afterSeq).slice(-limit),
   } as unknown as Store;
 }
 
@@ -100,6 +234,22 @@ export function fakeGithub(
           },
         ]
       );
+    },
+    async listPulls() {
+      maybeFail("listPulls");
+      return [
+        {
+          number: 14,
+          title: "fix: guard empty cart total",
+          author: "rox-watchdog[bot]",
+          authorIsBot: true,
+          state: "merged" as const,
+          createdAt: "2026-11-22T10:00:00Z",
+          mergedAt: "2026-11-22T12:00:00Z",
+          closedAt: "2026-11-22T12:00:00Z",
+          url: "https://github.com/acme/shop/pull/14",
+        },
+      ];
     },
     async countPulls() {
       return { total: 2, open: 2, merged: 0, closed: 0, capped: false };

@@ -2,9 +2,19 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import {
+  betterstackFromEnv,
+  ensureWebhook,
+} from "@agent/integrations/betterstack";
 import { revalidatePath } from "next/cache";
 import { type AgentConfig, configProblem } from "@/lib/agent-config";
 import { writeAgentConfig } from "@/lib/agent-config-store";
+import {
+  type BetterStackCheck,
+  betterstackWebhookUrl,
+  checkBetterStack,
+  saveBetterStackConnection,
+} from "@/lib/betterstack-connection";
 import { db } from "@/lib/db";
 import { invalidateInsights } from "@/lib/insights";
 import {
@@ -418,6 +428,91 @@ export async function disconnectSentry(): Promise<Result> {
     return NOT_SAVED;
   }
   await audit(session.uid, "connection.removed", { provider: "sentry" });
+  revalidatePath("/home/connections");
+  return { ok: true };
+}
+
+// ---------- Better Stack (wakes Rox) ----------
+
+/** Checks the Better Stack token in .env and lists the heartbeats and monitors it can see. */
+export async function checkBetterStackConnection(): Promise<
+  Result<{ check: BetterStackCheck }>
+> {
+  const session = await getSession();
+  if (!session) return SIGNED_OUT;
+  return { ok: true, check: await checkBetterStack() };
+}
+
+/**
+ * Connects one heartbeat or monitor: its incidents will wake Rox for this user. Also makes sure
+ * Better Stack sends incident changes to Rox's webhook (created once, kept in step with .env).
+ */
+export async function connectBetterStack(
+  kind: "heartbeat" | "monitor",
+  id: string,
+): Promise<Result<{ webhookCreated: boolean }>> {
+  const session = await getSession();
+  if (!session) return SIGNED_OUT;
+  const check = await checkBetterStack();
+  if (!check.ready)
+    return { ok: false, error: check.error ?? "Better Stack is not ready." };
+  // It must be one the token really sees; the browser's word is not enough.
+  const source = check.sources.find((s) => s.kind === kind && s.id === id);
+  if (!source)
+    return {
+      ok: false,
+      error: "The Better Stack token cannot see that heartbeat or monitor.",
+    };
+  const secret = process.env.BETTERSTACK_WEBHOOK_SECRET?.trim();
+  const url = betterstackWebhookUrl();
+  const s = betterstackFromEnv();
+  if (!secret || !url || !s)
+    return {
+      ok: false,
+      error:
+        "Set BETTERSTACK_WEBHOOK_SECRET and BETTERSTACK_WEBHOOK_URL in .env first, so incidents can reach Rox.",
+    };
+  let webhookCreated = false;
+  try {
+    webhookCreated = (await ensureWebhook(s, url, secret)).created;
+  } catch (error) {
+    return {
+      ok: false,
+      error: `Could not register Rox's webhook in Better Stack: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  try {
+    await saveBetterStackConnection(session.uid, {
+      kind,
+      id,
+      name: source.name,
+    });
+  } catch {
+    return {
+      ok: false,
+      error:
+        "Could not save. Another Rox user may have connected this heartbeat or monitor already.",
+    };
+  }
+  await audit(session.uid, "connection.betterstack", {
+    kind,
+    id,
+    name: source.name,
+    webhookCreated,
+  });
+  revalidatePath("/home/connections");
+  return { ok: true, webhookCreated };
+}
+
+export async function disconnectBetterStack(): Promise<Result> {
+  const session = await getSession();
+  if (!session) return SIGNED_OUT;
+  try {
+    await saveBetterStackConnection(session.uid, null);
+  } catch {
+    return NOT_SAVED;
+  }
+  await audit(session.uid, "connection.removed", { provider: "betterstack" });
   revalidatePath("/home/connections");
   return { ok: true };
 }

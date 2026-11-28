@@ -21,7 +21,7 @@ export type InputVerdict = {
   ms: number;
 };
 
-const DECISION_TIMEOUT_MS = 2_000;
+const DECISION_TIMEOUT_MS = 3_500;
 /** Block at or above this probability. Set high: a wrongly blocked user is a real cost too. */
 const BLOCK_AT = 0.8;
 

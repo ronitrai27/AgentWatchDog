@@ -3,13 +3,14 @@
 //   updates   what each node finished with
 //   tools     each tool, the moment it succeeds or fails
 //   custom    what a tool itself reports (the plan)
-import { checkInput } from "../guardrails/input";
+
 import {
   type AIMessage,
   type BaseMessage,
   HumanMessage,
   ToolMessage,
 } from "@langchain/core/messages";
+import { checkInput } from "../guardrails/input";
 import { redactText } from "../redact";
 import type { TurnStatus } from "../store/sessions";
 import { roxTools } from "../tools";

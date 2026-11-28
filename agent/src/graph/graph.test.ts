@@ -54,7 +54,8 @@ async function setup(t: Parameters<ReturnType<typeof scratchForTests>>[0]) {
         sessionId: session.id,
         turnId: started.id,
         store,
-        github: "github" in extra ? null : (fakeGithub() as never),
+        github:
+          "github" in extra ? (extra.github ?? null) : (fakeGithub() as never),
         docker,
         model,
         limits: { ...DEFAULT_LIMITS, ...extra.limits },
@@ -139,7 +140,10 @@ test("a tool round: the model asks, the tool runs, the model sees the result", a
   if (!h) return;
   const { result, events, model } = await h.turn(
     [
-      { text: "Let me look.", toolCalls: [{ name: "setup_get", id: "c1" }] },
+      {
+        text: "Let me look.",
+        toolCalls: [{ name: "setup_overview", id: "c1" }],
+      },
       { text: "You use acme/shop." },
     ],
     "what is my setup?",
@@ -155,8 +159,8 @@ test("a tool round: the model asks, the tool runs, the model sees the result", a
     "model.response",
   ]);
   const requested = events[2]?.data;
-  assert.equal(requested?.name, "setup_get");
-  assert.equal(requested?.title, "Read the saved setup");
+  assert.equal(requested?.name, "setup_overview");
+  assert.equal(requested?.title, "Read the setup");
   const completed = events[4];
   assert.equal(completed?.data.ok, true);
   assert.ok((completed?.durationMs ?? -1) >= 0);
@@ -173,7 +177,7 @@ test("a failing tool is shown as failed, the model is told why, and the turn sti
   if (!h) return;
   const { result, events, model } = await h.turn(
     [
-      { toolCalls: [{ name: "repo_overview", id: "c1" }] },
+      { toolCalls: [{ name: "repo_info", id: "c1" }] },
       { text: "GitHub could not be read." },
     ],
     "overview",
@@ -227,9 +231,9 @@ test("parallel read tools all run, and results keep the call order", async (t) =
     [
       {
         toolCalls: [
-          { name: "setup_get", id: "a" },
+          { name: "setup_overview", id: "a" },
           { name: "connections_list", id: "b" },
-          { name: "sandbox_check", id: "c" },
+          { name: "runs_query", id: "c" },
         ],
       },
       { text: "done" },
@@ -255,7 +259,11 @@ test("plan_update writes a plan event", async (t) => {
         toolCalls: [
           {
             name: "plan_update",
-            args: { items: [{ text: "Look", status: "doing" }] },
+            args: {
+              kind: "plan",
+              title: "Look around",
+              items: [{ text: "Look", status: "doing" }],
+            },
           },
         ],
       },
@@ -297,7 +305,7 @@ test("the model-call limit ends the turn with a clear message", async (t) => {
   const h = await setup(t);
   if (!h) return;
   const { result, events } = await h.turn(
-    [{ toolCalls: [{ name: "setup_get" }] }],
+    [{ toolCalls: [{ name: "setup_overview" }] }],
     "loop",
     { limits: { maxModelCalls: 3 } },
   );
@@ -314,8 +322,8 @@ test("the tool-call limit answers extra calls with an error instead of running t
     [
       {
         toolCalls: [
-          { name: "setup_get", id: "a" },
-          { name: "setup_get", id: "b" },
+          { name: "setup_overview", id: "a" },
+          { name: "setup_overview", id: "b" },
         ],
       },
       { text: "done" },
@@ -350,14 +358,15 @@ test("stopping while a tool runs closes that tool's step too", async (t) => {
   const h = await setup(t);
   if (!h) return;
   const controller = new AbortController();
-  h.docker.status = () => {
+  const github = fakeGithub();
+  github.getRepo = () => {
     setTimeout(() => controller.abort(), 20);
     return new Promise(() => {});
   };
   const { result, events } = await h.turn(
-    [{ toolCalls: [{ name: "sandbox_check", id: "a" }] }, { text: "never" }],
+    [{ toolCalls: [{ name: "repo_info", id: "a" }] }, { text: "never" }],
     "check",
-    { signal: controller.signal },
+    { signal: controller.signal, github: github as never },
   );
   assert.equal(result.status, "stopped");
   const done = events.filter((e) => e.type === "tool.completed");
@@ -410,12 +419,16 @@ test("sanitize drops an assistant message whose tool calls were never answered",
   const dangling = new AIMessage({
     content: "",
     id: "m1",
-    tool_calls: [{ id: "x", name: "setup_get", args: {}, type: "tool_call" }],
+    tool_calls: [
+      { id: "x", name: "setup_overview", args: {}, type: "tool_call" },
+    ],
   });
   const answered = new AIMessage({
     content: "",
     id: "m2",
-    tool_calls: [{ id: "y", name: "setup_get", args: {}, type: "tool_call" }],
+    tool_calls: [
+      { id: "y", name: "setup_overview", args: {}, type: "tool_call" },
+    ],
   });
   const state = {
     messages: [

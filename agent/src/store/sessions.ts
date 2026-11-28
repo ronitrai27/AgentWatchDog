@@ -158,6 +158,145 @@ const toEvent = (r: RawEvent): StoredEvent => ({
   durationMs: r.duration_ms,
 });
 
+export type RunStatus =
+  | "running"
+  | "paused"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "aborted";
+
+/**
+ * What a run came to, by the same rules as the Runs page: a run whose status is succeeded but
+ * that gave up is gave_up, and a fix is pr_opened only when a pull request exists.
+ */
+export type RunResult =
+  | "running"
+  | "paused"
+  | "pr_opened"
+  | "fixed_no_pr"
+  | "nothing_to_fix"
+  | "gave_up"
+  | "failed"
+  | "stopped_infra"
+  | "cancelled"
+  | "aborted"
+  | "finished";
+
+/** The same rule in SQL, so filters and counts agree with what each run says. */
+const RESULT_SQL = `CASE
+  WHEN status IN ('running', 'paused', 'failed', 'cancelled', 'aborted') THEN status
+  WHEN outcome = 'fixed' AND pr_url IS NOT NULL THEN 'pr_opened'
+  WHEN outcome = 'fixed' THEN 'fixed_no_pr'
+  WHEN outcome = 'nothing_to_fix' THEN 'nothing_to_fix'
+  WHEN outcome = 'gave_up' THEN 'gave_up'
+  WHEN outcome = 'infra' THEN 'stopped_infra'
+  ELSE 'finished' END`;
+
+export type RunFilter = {
+  /** Only runs that came to one of these. The window's counts ignore it. */
+  results?: RunResult[];
+  source?: string;
+  trigger?: string;
+  repo?: string;
+  pr?: number;
+  since?: Date;
+  until?: Date;
+  limit: number;
+};
+
+export type RunRow = {
+  runId: string;
+  source: string;
+  trigger: string | null;
+  invokedBy: string;
+  repo: string | null;
+  pr: number | null;
+  headSha: string | null;
+  title: string | null;
+  status: RunStatus;
+  outcome: string | null;
+  prUrl: string | null;
+  reason: string | null;
+  startedAt: Date;
+  finishedAt: Date | null;
+  durationMs: number | null;
+  costUsd: number;
+  modelCalls: number;
+  lastSeq: number;
+  /** When Rox's pull request for this run was merged, or null. */
+  prMergedAt: Date | null;
+};
+
+export type RunList = {
+  /** Every run in the window (time, source, trigger, repo, PR), whatever it came to. */
+  windowTotal: number;
+  /** Those runs counted by result. */
+  windowByResult: Partial<Record<RunResult, number>>;
+  /** Runs in the window whose pull request was merged. */
+  windowMerged: number;
+  /** How many runs also match the result filter. */
+  matching: number;
+  /** The matching runs, newest first, at most `limit`. */
+  runs: RunRow[];
+};
+
+export type RunEventRow = {
+  seq: number;
+  at: Date;
+  step: string;
+  kind: string;
+  title: string;
+  status: string | null;
+  ms: number | null;
+  attempt: number | null;
+};
+
+type RawRun = {
+  run_id: string;
+  source: string;
+  trigger: string | null;
+  invoked_by: string;
+  repo: string | null;
+  pr_number: number | null;
+  head_sha: string | null;
+  title: string | null;
+  status: RunStatus;
+  outcome: string | null;
+  pr_url: string | null;
+  reason: string | null;
+  started_at: Date;
+  finished_at: Date | null;
+  duration_ms: string | null;
+  cost_usd: string;
+  model_calls: number;
+  last_seq: number;
+  pr_merged_at: Date | null;
+};
+const RUN_COLUMNS =
+  "run_id, source, trigger, invoked_by, repo, pr_number, head_sha, title, status, outcome, pr_url, pr_merged_at, reason, started_at, finished_at, duration_ms, cost_usd, model_calls, last_seq";
+const toRun = (r: RawRun): RunRow => ({
+  runId: r.run_id,
+  source: r.source,
+  trigger: r.trigger,
+  invokedBy: r.invoked_by,
+  repo: r.repo,
+  pr: r.pr_number,
+  headSha: r.head_sha,
+  title: r.title,
+  status: r.status,
+  outcome: r.outcome,
+  prUrl: r.pr_url,
+  reason: r.reason,
+  startedAt: r.started_at,
+  finishedAt: r.finished_at,
+  durationMs: r.duration_ms === null ? null : Number(r.duration_ms),
+  costUsd: Number(r.cost_usd),
+  modelCalls: r.model_calls,
+  lastSeq: r.last_seq,
+  prMergedAt: r.pr_merged_at,
+});
+
 export type Store = ReturnType<typeof createStore>;
 
 export function createStore(db: Db) {
@@ -406,6 +545,105 @@ export function createStore(db: Db) {
               triggers: r.triggers,
             }
           : null;
+      });
+    },
+
+    /**
+     * The user's pipeline runs, newest first, with how many match in total and per status.
+     * Row-level security already limits rox_agent to this user's runs; the WHERE says it again.
+     */
+    async listRuns(userId: string, f: RunFilter): Promise<RunList> {
+      return db.withUser(userId, async (c) => {
+        const where = ["user_id = $1"];
+        const args: unknown[] = [userId];
+        const add = (sql: string, value: unknown) => {
+          args.push(value);
+          where.push(sql.replace("?", `$${args.length}`));
+        };
+        if (f.source) add("source = ?", f.source);
+        if (f.trigger) add("trigger = ?", f.trigger);
+        if (f.repo) add("repo = ?", f.repo);
+        if (f.pr !== undefined) add("pr_number = ?", f.pr);
+        if (f.since) add("started_at >= ?", f.since);
+        if (f.until) add("started_at < ?", f.until);
+        // The whole window, counted by result: a filtered question still sees everything that ran.
+        const counted = await c.query<{
+          result: RunResult;
+          n: string;
+          merged: string;
+        }>(
+          `SELECT ${RESULT_SQL} AS result, count(*) AS n,
+                  count(*) FILTER (WHERE pr_merged_at IS NOT NULL) AS merged
+             FROM runs WHERE ${where.join(" AND ")} GROUP BY 1`,
+          [...args],
+        );
+        if (f.results?.length) add(`(${RESULT_SQL}) = ANY(?)`, f.results);
+        const { rows } = await c.query<RawRun & { matching: string }>(
+          `SELECT ${RUN_COLUMNS}, count(*) OVER () AS matching
+             FROM runs WHERE ${where.join(" AND ")}
+            ORDER BY started_at DESC LIMIT ${Math.min(50, Math.max(1, f.limit))}`,
+          args,
+        );
+        const windowByResult: Partial<Record<RunResult, number>> = {};
+        for (const r of counted.rows) windowByResult[r.result] = Number(r.n);
+        return {
+          windowTotal: counted.rows.reduce((a, r) => a + Number(r.n), 0),
+          windowByResult,
+          windowMerged: counted.rows.reduce((a, r) => a + Number(r.merged), 0),
+          matching: Number(rows[0]?.matching ?? 0),
+          runs: rows.map(toRun),
+        };
+      });
+    },
+
+    /** One run of this user, or null. */
+    async getRun(userId: string, runId: string): Promise<RunRow | null> {
+      return db.withUser(userId, async (c) => {
+        const { rows } = await c.query<RawRun>(
+          `SELECT ${RUN_COLUMNS} FROM runs WHERE user_id = $1 AND run_id = $2`,
+          [userId, runId],
+        );
+        return rows[0] ? toRun(rows[0]) : null;
+      });
+    },
+
+    /** The steps of one run after `afterSeq`, oldest first, at most `limit`, plus the last seq. */
+    async listRunEvents(
+      userId: string,
+      runId: string,
+      afterSeq: number,
+      limit: number,
+    ): Promise<RunEventRow[]> {
+      return db.withUser(userId, async (c) => {
+        const { rows } = await c.query<{
+          seq: number;
+          at: Date;
+          step: string;
+          kind: string;
+          title: string;
+          status: string | null;
+          ms: number | null;
+          attempt: number | null;
+        }>(
+          // Newest `limit` after the cursor, then put back in order.
+          `SELECT * FROM (
+             SELECT e.seq, e.at, e.step, e.kind, e.title, e.status, e.ms, e.attempt
+               FROM run_events e JOIN runs r ON r.run_id = e.run_id
+              WHERE r.user_id = $1 AND e.run_id = $2 AND e.seq > $3
+              ORDER BY e.seq DESC LIMIT $4
+           ) t ORDER BY seq`,
+          [userId, runId, afterSeq, Math.min(200, Math.max(1, limit))],
+        );
+        return rows.map((r) => ({
+          seq: r.seq,
+          at: r.at,
+          step: r.step,
+          kind: r.kind,
+          title: r.title,
+          status: r.status,
+          ms: r.ms,
+          attempt: r.attempt,
+        }));
       });
     },
 

@@ -98,7 +98,7 @@ async function main() {
       config: { tone: "strict", instructions: "" },
     },
     {
-      text: "Use setup_get and sandbox_check, then tell me in two sentences what my setup is.",
+      text: "Use setup_overview, then tell me in two sentences what my setup is.",
       signal: new AbortController().signal,
       live: (e) => {
         if (e.kind === "delta" && e.channel === "text") streamed += e.text;

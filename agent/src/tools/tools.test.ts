@@ -4,7 +4,6 @@ import { detectProject } from "./detect";
 import {
   defaultPackageJson,
   fakeContext,
-  fakeDocker,
   fakeGithub,
   fakeStore,
   githubSetup,
@@ -124,29 +123,30 @@ test("every tool has a unique valid name, a timeout and a group", () => {
     "connections",
     "plan",
     "repo",
-    "sandbox",
+    "runs",
     "setup",
   ]);
 });
 
-// --- setup_get
+// --- setup_overview
 
-test("setup_get reports choices and never a key", async () => {
-  const out = await call("setup_get", {});
+test("setup_overview reports choices and never a key", async () => {
+  const out = await call("setup_overview", {});
   assert.equal(out.ok, true);
   if (out.ok) {
     const o = out.output as Record<string, unknown>;
     assert.equal(o.repository, "acme/shop");
     assert.equal(o.mode, "github");
     assert.equal(o.setupComplete, true);
+    assert.equal(o.sandbox, "docker");
     assert.deepEqual(o.modelProvidersWithSavedKey, ["OpenAI", "Google Gemini"]);
     assert.ok(!JSON.stringify(o).match(/sk-|AIza/));
   }
 });
 
-test("setup_get explains when the setup guide is not finished", async () => {
+test("setup_overview explains when the setup guide is not finished", async () => {
   const out = await call(
-    "setup_get",
+    "setup_overview",
     {},
     fakeContext({ store: fakeStore({ setup: null }) }),
   );
@@ -157,47 +157,126 @@ test("setup_get explains when the setup guide is not finished", async () => {
   }
 });
 
-// --- sandbox_check
-
-test("sandbox_check reports Docker details", async () => {
-  const out = await call("sandbox_check", {});
+test("connections_list: triggers on, what they do, and whether they can fire", async () => {
+  const out = await call("connections_list", {});
   assert.equal(out.ok, true);
   if (out.ok) {
-    const o = out.output as Record<string, unknown>;
-    assert.equal(o.ready, true);
-    assert.equal(o.engineVersion, "28.0.4");
-    assert.equal(o.memoryGiB, 8);
-    assert.match(out.summary, /Docker 28\.0\.4/);
+    const o = out.output as {
+      triggers: {
+        app: string;
+        on: { id: string; does: string }[];
+        canFire: boolean;
+        note?: string;
+      }[];
+      triggersOn: number;
+    };
+    assert.equal(o.triggersOn, 2);
+    const github = o.triggers.find((t) => t.app === "GitHub");
+    assert.deepEqual(
+      github?.on.map((t) => t.id),
+      ["github:pr_main"],
+    );
+    assert.equal(github?.canFire, true);
+    // Sentry's trigger is on, but Sentry is not connected in this setup.
+    const sentry = o.triggers.find((t) => t.app === "Sentry");
+    assert.equal(sentry?.canFire, false);
+    assert.match(sentry?.note ?? "", /not connected/);
+    assert.match(out.summary, /2 triggers on/);
   }
 });
 
-test("sandbox_check says why Docker is not usable", async () => {
-  const down = new ToolError("unavailable", "Docker is not running", {
-    hint: "Start Docker Desktop",
-    cause: "ENOENT docker_engine pipe",
-  });
-  const out = await call(
-    "sandbox_check",
-    {},
-    fakeContext({ docker: fakeDocker(down) }),
-  );
-  assert.equal(out.ok, false);
-  if (!out.ok) {
-    assert.equal(out.error.kind, "unavailable");
+// --- runs
+
+test("runs_query: failed finds a run that succeeded but gave up, and the window is always counted", async () => {
+  const failed = await call("runs_query", { result: ["failed"] });
+  assert.equal(failed.ok, true);
+  if (failed.ok) {
+    const o = failed.output as {
+      matching: number;
+      windowTotals: { runs: number; failed: number; ofWhichGaveUp: number };
+      runs: { runId: string; result: string; status: string }[];
+    };
+    assert.equal(o.matching, 1);
+    assert.equal(o.runs[0]?.runId, "run-gave-up");
+    assert.equal(o.runs[0]?.status, "succeeded");
+    assert.equal(o.runs[0]?.result, "gave_up");
+    // The filter does not shrink the counts: all 3 runs of the window are there.
+    assert.equal(o.windowTotals.runs, 3);
+    assert.equal(o.windowTotals.failed, 1);
+    assert.equal(o.windowTotals.ofWhichGaveUp, 1);
+    assert.equal(
+      (o.windowTotals as { pullRequestsMerged?: number }).pullRequestsMerged,
+      1,
+    );
+    assert.match(failed.summary, /1 matching of 3 runs, 1 live, 1 failed/);
+  }
+});
+
+test("runs_query lists live runs, and says what else ran when nothing matches", async () => {
+  const live = await call("runs_query", { result: ["live"] });
+  assert.equal(live.ok, true);
+  if (live.ok) {
+    const o = live.output as {
+      matching: number;
+      runs: { runId: string; live: boolean; startedBy: string }[];
+    };
+    assert.equal(o.matching, 1);
+    assert.equal(o.runs[0]?.runId, "run-live");
+    assert.equal(o.runs[0]?.live, true);
+    assert.match(o.runs[0]?.startedBy ?? "", /GitHub · PR opened against main/);
+  }
+  const none = await call("runs_query", { result: ["nothing_to_fix"] });
+  if (none.ok)
     assert.match(
-      modelText(out),
-      /Docker is not running[\s\S]*Cause: ENOENT[\s\S]*Hint: Start Docker Desktop/,
+      (none.output as { note: string }).note,
+      /the window has 3 runs/,
+    );
+  const fixed = await call("runs_query", {
+    result: ["pr_opened"],
+    since: "all",
+  });
+  if (fixed.ok)
+    assert.equal(
+      (fixed.output as { runs: { pullRequestOpened: string }[] }).runs[0]
+        ?.pullRequestOpened,
+      "https://github.com/acme/shop/pull/14",
+    );
+  const bad = await call("runs_query", { since: "last tuesday" });
+  assert.equal(bad.ok === false && bad.error.kind, "invalid_input");
+});
+
+test("runs_get reads the live run with its steps, and only new steps after a seq", async () => {
+  const out = await call("runs_get", { run: "live" });
+  assert.equal(out.ok, true);
+  if (out.ok) {
+    const o = out.output as {
+      run: { runId: string };
+      steps: { seq: number }[];
+    };
+    assert.equal(o.run.runId, "run-live");
+    assert.deepEqual(
+      o.steps.map((s) => s.seq),
+      [1, 2, 3, 4],
     );
   }
-  const other = await call(
-    "sandbox_check",
-    {},
-    fakeContext({
-      store: fakeStore({ setup: { ...githubSetup, sandbox: "cloud" } }),
-    }),
+  const later = await call("runs_get", { run: "run-live", afterSeq: 3 });
+  if (later.ok)
+    assert.deepEqual(
+      (later.output as { steps: { seq: number }[] }).steps.map((s) => s.seq),
+      [4],
+    );
+});
+
+test("runs_get says plainly when nothing is running or the id is unknown", async () => {
+  const idle = await call(
+    "runs_get",
+    { run: "live" },
+    fakeContext({ store: fakeStore({ runs: [] }) }),
   );
-  assert.equal(other.ok, true);
-  if (other.ok) assert.equal((other.output as { ready: boolean }).ready, false);
+  assert.equal(idle.ok === false && idle.error.kind, "not_found");
+  if (!idle.ok) assert.match(idle.error.message, /No run is going on/);
+  const unknown = await call("runs_get", { run: "nope" });
+  assert.equal(unknown.ok === false && unknown.error.kind, "not_found");
 });
 
 // --- connections_list
@@ -293,6 +372,8 @@ test("plan_update emits the list and counts statuses", async () => {
   const out = await call(
     "plan_update",
     {
+      kind: "plan",
+      title: "Check PR 12",
       items: [
         { text: "Read repo", status: "done" },
         { text: "Check sandbox", status: "doing" },
@@ -304,30 +385,37 @@ test("plan_update emits the list and counts statuses", async () => {
   assert.equal(out.ok, true);
   assert.equal(emitted.length, 1);
   assert.equal(emitted[0]?.type, "plan.updated");
+  assert.equal(emitted[0]?.data.kind, "plan");
+  assert.equal(emitted[0]?.data.title, "Check PR 12");
   if (out.ok) assert.match(out.summary, /1 done · 1 doing · 1 to do/);
 });
 
 test("plan_update rejects an empty or oversized list", async () => {
-  assert.equal((await call("plan_update", { items: [] })).ok, false);
+  const base = { kind: "queue", title: "Asks" };
+  assert.equal((await call("plan_update", { ...base, items: [] })).ok, false);
   const many = Array.from({ length: 13 }, (_, i) => ({
     text: `s${i}`,
     status: "todo",
   }));
-  assert.equal((await call("plan_update", { items: many })).ok, false);
+  assert.equal((await call("plan_update", { ...base, items: many })).ok, false);
   assert.equal(
-    (await call("plan_update", { items: [{ text: "x", status: "paused" }] }))
-      .ok,
+    (
+      await call("plan_update", {
+        ...base,
+        items: [{ text: "x", status: "paused" }],
+      })
+    ).ok,
     false,
   );
 });
 
 // --- repo tools
 
-test("repo_overview gathers repo, PRs with checks, commits and language share", async () => {
+test("repo_info gathers repo, PRs with checks, commits, language share and Rox activity", async () => {
   const github = fakeGithub({
     checks: { sha13: { state: "failing", total: 2, failing: ["lint"] } },
   });
-  const out = await call("repo_overview", {}, fakeContext({ github }));
+  const out = await call("repo_info", {}, fakeContext({ github }));
   assert.equal(out.ok, true);
   if (out.ok) {
     const o = out.output as {
@@ -341,7 +429,16 @@ test("repo_overview gathers repo, PRs with checks, commits and language share", 
     assert.equal(o.openPullRequests.length, 2);
     assert.equal(o.openPullRequests[1]?.checks?.state, "failing");
     assert.deepEqual(o.warnings, []);
-    assert.match(out.summary, /acme\/shop · 2 open PRs · checks passing/);
+    const activity = (
+      out.output as {
+        activity: { roxPullRequests: { opened: number; merged: number } };
+      }
+    ).activity;
+    assert.equal(activity.roxPullRequests.merged, 1);
+    assert.match(
+      out.summary,
+      /acme\/shop · 2 open PRs · checks passing · Rox \d+ PRs, 1 merged/,
+    );
   }
 });
 
@@ -351,7 +448,7 @@ test("repo_overview keeps going when one GitHub call fails, and says which", asy
       listOpenPulls: new ToolError("rate_limited", "GitHub rate limit reached"),
     },
   });
-  const out = await call("repo_overview", {}, fakeContext({ github }));
+  const out = await call("repo_info", {}, fakeContext({ github }));
   assert.equal(out.ok, true);
   if (out.ok) {
     const o = out.output as { warnings: string[]; openPullRequests: unknown[] };
@@ -371,7 +468,7 @@ test("repo_overview fails clearly when the repo itself cannot be read", async ()
       }),
     },
   });
-  const out = await call("repo_overview", {}, fakeContext({ github }));
+  const out = await call("repo_info", {}, fakeContext({ github }));
   assert.equal(out.ok, false);
   if (!out.ok) {
     assert.equal(out.error.kind, "forbidden");
@@ -383,82 +480,37 @@ test("GitHub tools explain why they cannot run", async () => {
   const noInstall = fakeContext({
     store: fakeStore({ setup: { ...githubSetup, installationId: null } }),
   });
-  const a = await call("repo_overview", {}, noInstall);
+  const a = await call("repo_info", {}, noInstall);
   assert.equal(a.ok === false && a.error.kind, "unavailable");
 
   const noClient = fakeContext({ github: null });
-  const b = await call("repo_overview", {}, noClient);
+  const b = await call("repo_info", {}, noClient);
   assert.equal(b.ok === false && b.error.kind, "unavailable");
   if (!b.ok) assert.match(b.error.hint ?? "", /GITHUB_APP_ID/);
 
   const demo = fakeContext({ store: fakeStore({ user: { isDemo: true } }) });
-  const c = await call("repo_detect_project", {}, demo);
+  const c = await call("repo_info", {}, demo);
   assert.equal(c.ok === false && c.error.kind, "unavailable");
   if (!c.ok) assert.match(c.error.message, /Quick Judge/);
 
   const noRepo = fakeContext({
     store: fakeStore({ setup: { ...githubSetup, repo: null } }),
   });
-  const d = await call("repo_overview", {}, noRepo);
+  const d = await call("repo_info", {}, noRepo);
   assert.equal(d.ok === false && d.error.kind, "not_found");
-});
-
-test("repo_detect_project reads package.json and the workflow folder", async () => {
-  const github = fakeGithub({
-    files: { "package.json": defaultPackageJson },
-    dirs: {
-      ".github/workflows": [
-        { name: "ci.yml", type: "file", size: 10 },
-        { name: "README.md", type: "file", size: 10 },
-      ],
-    },
-  });
-  const out = await call("repo_detect_project", {}, fakeContext({ github }));
-  assert.equal(out.ok, true);
-  if (out.ok) {
-    const o = out.output as {
-      framework: string;
-      ci: { workflows: string[] };
-      commands: { test: string };
-    };
-    assert.equal(o.framework, "Next.js");
-    assert.deepEqual(o.ci.workflows, ["ci.yml"]);
-    assert.equal(o.commands.test, "pnpm run test");
-    assert.match(out.summary, /TypeScript · Next\.js · pnpm · has tests/);
-  }
-});
-
-test("repo_detect_project: empty repo and a failed file read", async () => {
-  const empty = await call(
-    "repo_detect_project",
-    {},
-    fakeContext({ github: fakeGithub({ rootDir: null }) }),
-  );
-  assert.equal(empty.ok === false && empty.error.kind, "not_found");
-
-  const github = fakeGithub({
-    fail: { getFile: new ToolError("unavailable", "GitHub is down") },
-  });
-  const out = await call("repo_detect_project", {}, fakeContext({ github }));
-  assert.equal(out.ok, true);
-  if (out.ok)
-    assert.match(
-      (out.output as { warnings: string[] }).warnings.join(" "),
-      /package\.json: GitHub is down/,
-    );
 });
 
 test("every tool result is plain JSON the model can read", async () => {
   for (const name of [
-    "setup_get",
-    "sandbox_check",
+    "setup_overview",
     "connections_list",
-    "repo_overview",
-    "repo_detect_project",
+    "repo_info",
+    "runs_query",
+    "runs_get",
   ]) {
     const out = await call(
       name,
-      {},
+      name === "runs_get" ? { run: "latest" } : {},
       fakeContext({
         github: fakeGithub({ files: { "package.json": defaultPackageJson } }),
       }),
